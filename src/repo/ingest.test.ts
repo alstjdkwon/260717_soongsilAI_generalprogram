@@ -1,0 +1,194 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { openDb, type DB } from "../db/db";
+import { FakeParser } from "../ai/fakeParser";
+import { ingestFiles, attachPending, dismissPending } from "./ingest";
+import { transitionCase } from "./cases";
+import { getCaseView, getAllCaseViews, getPendingDocuments } from "./queries";
+import type { ExtractedFields } from "../domain/flags";
+import type { InputFile, ParsedDocument } from "../ai/types";
+
+const file = (name: string): InputFile => ({ name, bytes: new Uint8Array(), mime: "application/pdf" });
+
+function fields(
+  o: Partial<Record<keyof ExtractedFields, [string | number, "HIGH" | "MID" | "LOW"]>>,
+): ExtractedFields {
+  const out: ExtractedFields = {};
+  for (const [k, [value, confidence]] of Object.entries(o)) {
+    out[k as keyof ExtractedFields] = { value, confidence };
+  }
+  return out;
+}
+
+const application = (f: ExtractedFields): ParsedDocument => ({ detectedKind: "APPLICATION", fields: f });
+const completion = (f: ExtractedFields): ParsedDocument => ({ detectedKind: "COMPLETION", fields: f });
+
+describe("ingestFiles", () => {
+  let db: DB;
+  beforeEach(() => {
+    db = openDb();
+  });
+
+  it("신청서 → 새 직원과 심사 건을 만든다", async () => {
+    const parser = new FakeParser({
+      "a.pdf": application(fields({ name: ["김테스트", "HIGH"], department: ["전산팀", "HIGH"], education_name: ["도커 실무", "HIGH"], amount: [90000, "HIGH"] })),
+    });
+    const [r] = await ingestFiles(db, parser, [file("a.pdf")]);
+    expect(r.outcome).toBe("CREATED_CASE");
+    const view = getCaseView(db, r.caseId!)!;
+    expect(view.name).toBe("김테스트");
+    expect(view.status).toBe("SCREENING");
+    expect(view.educationName).toBe("도커 실무");
+    expect(view.expectedCost).toBe(90000);
+  });
+
+  it("같은 이름의 신청서 두 건은 직원 하나에 건 둘로 붙는다", async () => {
+    const parser = new FakeParser({
+      "a1.pdf": application(fields({ name: ["박중복", "HIGH"], department: ["총무팀", "HIGH"], education_name: ["교육1", "HIGH"], amount: [10000, "HIGH"] })),
+      "a2.pdf": application(fields({ name: ["박중복", "HIGH"], department: ["총무팀", "HIGH"], education_name: ["교육2", "HIGH"], amount: [20000, "HIGH"] })),
+    });
+    const rs = await ingestFiles(db, parser, [file("a1.pdf"), file("a2.pdf")]);
+    const v1 = getCaseView(db, rs[0].caseId!)!;
+    const v2 = getCaseView(db, rs[1].caseId!)!;
+    expect(v1.employeeId).toBe(v2.employeeId);
+    expect(v1.id).not.toBe(v2.id);
+  });
+
+  it("저신뢰 필드가 있는 신청서는 검토 필요 큐로 간다", async () => {
+    const parser = new FakeParser({
+      "low.pdf": application(fields({ name: ["최저신뢰", "HIGH"], education_name: ["애매교육", "LOW"], amount: [50000, "LOW"] })),
+    });
+    const [r] = await ingestFiles(db, parser, [file("low.pdf")]);
+    const view = getCaseView(db, r.caseId!)!;
+    expect(view.flags.minConfidence).toBe("LOW");
+    expect(view.flags.needsReview).toBe(true);
+    expect(view.bucket).toBe("REVIEW");
+  });
+
+  it("이수증 → 이수 대기 중인 같은 이름·교육 건에 매칭되고 서류 도착 처리된다", async () => {
+    const parser = new FakeParser({
+      "app.pdf": application(fields({ name: ["이매칭", "HIGH"], education_name: ["엑셀 실무", "HIGH"], amount: [40000, "HIGH"] })),
+      "cert.pdf": completion(fields({ name: ["이매칭", "HIGH"], education_name: ["엑셀 실무", "HIGH"], amount: [40000, "HIGH"], hours: [16, "HIGH"] })),
+    });
+    const [app] = await ingestFiles(db, parser, [file("app.pdf")]);
+    transitionCase(db, app.caseId!, "APPROVE"); // 심사 → 이수 대기
+    const [cert] = await ingestFiles(db, parser, [file("cert.pdf")]);
+    expect(cert.outcome).toBe("MATCHED_CASE");
+    expect(cert.caseId).toBe(app.caseId);
+    const view = getCaseView(db, app.caseId!)!;
+    expect(view.status).toBe("AWAITING_REFUND");
+    expect(view.completion?.hours?.value).toBe(16);
+  });
+
+  it("맞는 이수 대기 건이 없는 이수증은 미매칭으로 리포트하고 DB를 건드리지 않는다", async () => {
+    const parser = new FakeParser({
+      "orphan.pdf": completion(fields({ name: ["없는사람", "HIGH"], education_name: ["무엇", "HIGH"], amount: [1000, "HIGH"] })),
+    });
+    const [r] = await ingestFiles(db, parser, [file("orphan.pdf")]);
+    expect(r.outcome).toBe("UNMATCHED");
+    expect(r.caseId).toBeUndefined();
+    expect(getAllCaseViews(db)).toHaveLength(0);
+  });
+
+  it("승인 전(심사 대기) 건만 있으면 이수증은 매칭되지 않는다", async () => {
+    const parser = new FakeParser({
+      "app.pdf": application(fields({ name: ["김심사", "HIGH"], education_name: ["교육", "HIGH"], amount: [30000, "HIGH"] })),
+      "cert.pdf": completion(fields({ name: ["김심사", "HIGH"], education_name: ["교육", "HIGH"], amount: [30000, "HIGH"], hours: [8, "HIGH"] })),
+    });
+    await ingestFiles(db, parser, [file("app.pdf")]); // 승인 안 함 → SCREENING
+    const [cert] = await ingestFiles(db, parser, [file("cert.pdf")]);
+    expect(cert.outcome).toBe("UNMATCHED");
+  });
+
+  it("판별 실패(UNKNOWN)는 DB를 건드리지 않고 사유를 돌려준다", async () => {
+    const parser = new FakeParser({}); // 미등록 → UNKNOWN
+    const [r] = await ingestFiles(db, parser, [file("mystery.pdf")]);
+    expect(r.outcome).toBe("UNKNOWN");
+    expect(getAllCaseViews(db)).toHaveLength(0);
+  });
+
+  it("교육명이 어긋나도 단일 후보면 첨부하고, 대조 단계가 불일치를 잡는다", async () => {
+    const parser = new FakeParser({
+      "app.pdf": application(fields({ name: ["박상이", "HIGH"], education_name: ["계약·회계 실무", "HIGH"], amount: [50000, "HIGH"] })),
+      "cert.pdf": completion(fields({ name: ["박상이", "HIGH"], education_name: ["회계 결산 실무 과정", "HIGH"], amount: [50000, "HIGH"], hours: [12, "HIGH"] })),
+    });
+    const [app] = await ingestFiles(db, parser, [file("app.pdf")]);
+    transitionCase(db, app.caseId!, "APPROVE");
+    const [cert] = await ingestFiles(db, parser, [file("cert.pdf")]);
+    expect(cert.outcome).toBe("MATCHED_CASE");
+    const view = getCaseView(db, app.caseId!)!;
+    expect(view.flags.mismatches.some((m) => m.field === "education_name")).toBe(true);
+    expect(view.bucket).toBe("REVIEW");
+  });
+
+  it("동명이인 + 뚜렷한 교육명 차이 → 맞는 건에 자동 매칭된다", async () => {
+    const parser = new FakeParser({
+      "a1.pdf": application(fields({ name: ["이동명", "HIGH"], education_name: ["쿠버네티스 운영 실무", "HIGH"], amount: [90000, "HIGH"] })),
+      "a2.pdf": application(fields({ name: ["이동명", "HIGH"], education_name: ["재무제표 분석 실무", "HIGH"], amount: [80000, "HIGH"] })),
+      "cert.pdf": completion(fields({ name: ["이동명", "HIGH"], education_name: ["재무제표 분석 실무", "HIGH"], amount: [80000, "HIGH"], hours: [20, "HIGH"] })),
+    });
+    const [a1, a2] = await ingestFiles(db, parser, [file("a1.pdf"), file("a2.pdf")]);
+    transitionCase(db, a1.caseId!, "APPROVE");
+    transitionCase(db, a2.caseId!, "APPROVE");
+    const [cert] = await ingestFiles(db, parser, [file("cert.pdf")]);
+    expect(cert.outcome).toBe("MATCHED_CASE");
+    expect(cert.caseId).toBe(a2.caseId); // 재무제표 건
+    expect(getCaseView(db, a2.caseId!)!.status).toBe("AWAITING_REFUND");
+    expect(getCaseView(db, a1.caseId!)!.status).toBe("IN_PROGRESS"); // 쿠버네티스 건은 그대로
+  });
+
+  it("동명이인 + 애매한 교육명 → 후보 보관(PENDING_REVIEW), 자동 첨부하지 않는다", async () => {
+    const parser = new FakeParser({
+      "a1.pdf": application(fields({ name: ["김애매", "HIGH"], education_name: ["엑셀 고급 함수", "HIGH"], amount: [40000, "HIGH"] })),
+      "a2.pdf": application(fields({ name: ["김애매", "HIGH"], education_name: ["엑셀 기초 함수", "HIGH"], amount: [40000, "HIGH"] })),
+      "cert.pdf": completion(fields({ name: ["김애매", "HIGH"], education_name: ["엑셀 중급 함수", "HIGH"], amount: [40000, "HIGH"], hours: [8, "HIGH"] })),
+    });
+    const [a1, a2] = await ingestFiles(db, parser, [file("a1.pdf"), file("a2.pdf")]);
+    transitionCase(db, a1.caseId!, "APPROVE");
+    transitionCase(db, a2.caseId!, "APPROVE");
+    const [cert] = await ingestFiles(db, parser, [file("cert.pdf")]);
+    expect(cert.outcome).toBe("PENDING_REVIEW");
+    // 어느 건에도 자동 첨부되지 않음
+    expect(getCaseView(db, a1.caseId!)!.status).toBe("IN_PROGRESS");
+    expect(getCaseView(db, a2.caseId!)!.status).toBe("IN_PROGRESS");
+    // 보관함에 후보 2건과 함께 담긴다
+    const pending = getPendingDocuments(db);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].candidates.map((c) => c.caseId).sort()).toEqual([a1.caseId, a2.caseId].sort());
+    expect(pending[0].educationName).toBe("엑셀 중급 함수");
+  });
+});
+
+describe("attachPending / dismissPending", () => {
+  // 동명이인으로 보관(PENDING)된 이수증 하나를 만들어 두고 시작한다.
+  async function setupPending() {
+    const db = openDb();
+    const parser = new FakeParser({
+      "a1.pdf": application(fields({ name: ["김애매", "HIGH"], education_name: ["엑셀 고급 함수", "HIGH"], amount: [40000, "HIGH"] })),
+      "a2.pdf": application(fields({ name: ["김애매", "HIGH"], education_name: ["엑셀 기초 함수", "HIGH"], amount: [40000, "HIGH"] })),
+      "cert.pdf": completion(fields({ name: ["김애매", "HIGH"], education_name: ["엑셀 중급 함수", "HIGH"], amount: [40000, "HIGH"], hours: [8, "HIGH"] })),
+    });
+    const [a1, a2] = await ingestFiles(db, parser, [file("a1.pdf"), file("a2.pdf")]);
+    transitionCase(db, a1.caseId!, "APPROVE");
+    transitionCase(db, a2.caseId!, "APPROVE");
+    await ingestFiles(db, parser, [file("cert.pdf")]);
+    const pendingId = getPendingDocuments(db)[0].id;
+    return { db, a1: a1.caseId!, a2: a2.caseId!, pendingId };
+  }
+
+  it("고른 건에 첨부하면 서류 도착으로 넘어가고 보관 행은 사라진다", async () => {
+    const { db, a1, a2, pendingId } = await setupPending();
+    attachPending(db, pendingId, a2);
+    expect(getCaseView(db, a2)!.status).toBe("AWAITING_REFUND");
+    expect(getCaseView(db, a2)!.completion?.hours?.value).toBe(8);
+    expect(getCaseView(db, a1)!.status).toBe("IN_PROGRESS"); // 안 고른 건은 그대로
+    expect(getPendingDocuments(db)).toHaveLength(0);
+  });
+
+  it("버리면 아무 건도 바뀌지 않고 보관 행만 사라진다", async () => {
+    const { db, a1, a2, pendingId } = await setupPending();
+    dismissPending(db, pendingId);
+    expect(getCaseView(db, a1)!.status).toBe("IN_PROGRESS");
+    expect(getCaseView(db, a2)!.status).toBe("IN_PROGRESS");
+    expect(getPendingDocuments(db)).toHaveLength(0);
+  });
+});

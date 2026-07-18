@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.upstage.ai)",
+      "Bash(npm --version)",
+      "Bash(node -e \"const {DatabaseSync}=require\\('node:sqlite'\\); const db=new DatabaseSync\\(':memory:'\\); db.exec\\('CREATE TABLE t\\(x\\)'\\); db.prepare\\('INSERT INTO t VALUES\\(?\\)'\\).run\\(42\\); console.log\\('node:sqlite OK', db.prepare\\('SELECT x FROM t'\\).get\\(\\)\\);\")",
+      "Bash(npm install *)",
+      "Bash(NODE_NO_WARNINGS=1 npm test)",
+      "Bash(npm run *)",
+      "Bash(echo \"---EXIT: $?---\")",
+      "Bash(find /Users/kwonminseong -name \"design*.md\" -o -name \"*design*.md\" 2>/dev/null | grep -E \"\\(frontend|design\\)\" | head -10)",
+      "Bash(npx vitest *)",
+      "Bash(npm -v)",
+      "Bash(npm i *)",
+      "Bash(curl -s http://localhost:3210/)",
+      "Bash(curl -s http://localhost:3210/case/10)",
+      "Bash(curl -s http://localhost:3210/board)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(curl -s http://localhost:3210/case/4)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(npm test *)",
+      "Read(//System/Library/Fonts/Supplemental/**)",
+      "Bash(curl -s -o /dev/null -w \"upstage: %{http_code}\\\\n\" --max-time 8 https://api.upstage.ai/v1/document-ai/)",
+      "Bash(curl -s -o /dev/null -w \"openai: %{http_code}\\\\n\" --max-time 8 https://api.openai.com/v1/models)",
+      "Bash(node /tmp/_t.ts)",
+      "Bash(node scripts/make-pdfs.ts)",
+      "Bash(qlmanage -t -s 900 -o /tmp __TRACKED_VAR__/data/fixtures/app-01-kim.pdf __TRACKED_VAR__/data/fixtures/comp-03-han.pdf)",
+      "Bash(rm -f comp-03-han.pdf.png)",
+      "Bash(qlmanage -t -s 900 -o /tmp __TRACKED_VAR__/data/fixtures/comp-03-han.pdf)",
+      "Bash(qlmanage -t -s 900 -o /tmp data/fixtures/comp-03-han.pdf)",
+      "Bash(pkill -f qlmanage)",
+      "Bash(pkill -9 qlmanage)",
+      "Bash(timeout 40 qlmanage -t -s 900 -o /tmp/ data/fixtures/comp-03-han.pdf)",
+      "Bash(qlmanage -r)",
+      "Bash(NODE_NO_WARNINGS=1 npx vitest run src/repo/ingest.test.ts)",
+      "WebFetch(domain:console.upstage.ai)"
+    ]
+  }
+}
