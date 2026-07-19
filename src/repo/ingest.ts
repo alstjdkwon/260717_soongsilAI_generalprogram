@@ -4,27 +4,38 @@ import type { CaseStatus } from "../domain/status";
 import { createCase, createEmployee, getCase, getEmployee, transitionCase } from "./cases";
 import {
   educationSimilarity,
+  normalizeDept,
+  normalizeName,
   AUTO_MATCH_THRESHOLD,
   CLEAR_GAP,
 } from "../domain/similarity";
 import type { DocumentParser, InputFile, ParsedDocument } from "../ai/types";
 
 /**
- * 업로드된 파일 묶음을 AI 로 판별·추출해 DB 로 흘려보낸다.
+ * 업로드된 파일 묶음을 AI 로 추출해 DB 로 흘려보낸다.
  *
- * 규칙(기획서 §5 Phase 3):
- *  - 신청서(APPLICATION) → 직원(없으면 생성) + 새 심사 건 + 문서
+ * 문서 종류는 매니저가 업로드 칸으로 지정한다(declaredKind) — AI 판별은 검증용으로만 쓴다.
+ * 양식 이름이 기관마다 제각각이라 제목 기반 판별이 실제로 틀린 적이 있어, 사람의 지정을 진실로 삼는다.
+ *
+ * 규칙:
+ *  - 신청서(APPLICATION) → 직원(이름+부서 대조) + 새 심사 건 + 문서.
+ *    이름은 같은데 부서가 다르거나(동명이인?), 같은 교육이 이미 진행중이면(중복?) 보관함으로.
  *  - 이수증(COMPLETION) → 이수 대기(IN_PROGRESS) 건 중 이름·교육명으로 매칭 →
- *    문서 첨부 + [서류 도착] 전이. 단일 확신 매칭만; 애매하면 미매칭으로 리포트(Phase 4에서 후보 선택).
- *  - 판별 실패(UNKNOWN)·미매칭 → DB 를 건드리지 않고 사유만 돌려준다(검토 필요).
+ *    문서 첨부 + [서류 도착] 전이. 애매하면 보관함에서 세영 님이 선택.
  *
  * 파서 인터페이스에만 의존 — 테스트는 FakeParser, 운영은 LlmParser.
  */
 
+/** 매니저가 업로드 칸으로 지정하는 문서 종류. */
+export type DeclaredKind = "APPLICATION" | "COMPLETION";
+
+/** 자동 처리를 멈추고 사람 판단을 받아야 하는 이유. */
+export type HoldReason = "DEPT_MISMATCH" | "DUPLICATE";
+
 export type IngestOutcome =
   | "CREATED_CASE" // 신청서 → 새 건
   | "MATCHED_CASE" // 이수증 → 기존 건 자동 매칭
-  | "PENDING_REVIEW" // 이수증인데 자동 매칭이 위험 → 보관함에서 세영 님이 선택
+  | "PENDING_REVIEW" // 자동 처리가 위험 → 보관함에서 세영 님이 결정
   | "UNKNOWN"; // 문서 종류 판별 실패
 
 export interface IngestResult {
@@ -68,6 +79,7 @@ interface CandidateRow {
   id: number;
   education_name: string | null;
   status: CaseStatus;
+  employee_name: string;
 }
 
 type MatchResult =
@@ -83,21 +95,23 @@ type MatchResult =
  *    아니면 후보 목록을 돌려줘 세영 님이 고르게 한다.
  */
 function matchCompletion(db: DB, fields: ExtractedFields): MatchResult {
-  const name = fieldStr(fields, "name");
+  const name = normalizeName(fieldStr(fields, "name"));
   if (!name) return { none: true };
 
-  const rows = db
-    .prepare(
-      `SELECT c.id, c.education_name, c.status
-         FROM cases c
-         JOIN employees e ON e.id = c.employee_id
-        WHERE c.status = 'IN_PROGRESS'
-          AND e.name = ?
-          AND NOT EXISTS (
-            SELECT 1 FROM documents d WHERE d.case_id = c.id AND d.kind = 'COMPLETION'
-          )`,
-    )
-    .all(name) as unknown as CandidateRow[];
+  // 이름 비교는 정규화 후 JS 에서 — SQL 의 = 는 OCR 이 남긴 공백 차이를 다른 사람으로 본다.
+  const rows = (
+    db
+      .prepare(
+        `SELECT c.id, c.education_name, c.status, e.name AS employee_name
+           FROM cases c
+           JOIN employees e ON e.id = c.employee_id
+          WHERE c.status = 'IN_PROGRESS'
+            AND NOT EXISTS (
+              SELECT 1 FROM documents d WHERE d.case_id = c.id AND d.kind = 'COMPLETION'
+            )`,
+      )
+      .all() as unknown as CandidateRow[]
+  ).filter((r) => normalizeName(r.employee_name) === name);
 
   if (rows.length === 0) return { none: true };
   if (rows.length === 1) return { caseId: rows[0].id };
@@ -115,21 +129,53 @@ function matchCompletion(db: DB, fields: ExtractedFields): MatchResult {
   return { candidates: scored.map((s) => s.id) };
 }
 
-/** 애매한 이수증을 보관함에 저장(후보 목록과 함께). 세영 님이 나중에 골라 붙인다. */
+/**
+ * 자동 처리가 위험한 문서를 보관함에 저장(후보와 함께). 세영 님이 나중에 결정한다.
+ * @param candidateIds 이수증이면 후보 case id, 부서 불일치면 이름이 같은 employee id, 중복이면 충돌한 case id
+ */
 function insertPendingDocument(
   db: DB,
-  kind: "COMPLETION" | "REPORT",
+  kind: "APPLICATION" | "COMPLETION" | "REPORT",
   parsed: ParsedDocument,
   filePath: string,
   candidateIds: number[],
+  declaredKind: DeclaredKind,
+  holdReason: HoldReason | null = null,
 ): number {
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO pending_documents (kind, detected_kind, extracted_fields, file_path, candidate_ids)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO pending_documents
+         (kind, detected_kind, extracted_fields, file_path, candidate_ids, declared_kind, hold_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(kind, parsed.detectedKind, JSON.stringify(parsed.fields), filePath, JSON.stringify(candidateIds));
+    .run(
+      kind,
+      parsed.detectedKind,
+      JSON.stringify(parsed.fields),
+      filePath,
+      JSON.stringify(candidateIds),
+      declaredKind,
+      holdReason,
+    );
   return Number(lastInsertRowid);
+}
+
+/** 진행중(반려·완료가 아닌) 건들 — 중복 신청 검사 대상. 반려 건은 정당한 재신청이므로 제외한다. */
+const ACTIVE_STATUSES = ["SCREENING", "IN_PROGRESS", "DOCS_ARRIVED", "AWAITING_REFUND"] as const;
+
+/** 같은 직원이 같은 교육으로 이미 올려둔 진행중 건. 있으면 중복 의심 → 사람이 판단. */
+function findDuplicateCase(db: DB, employeeId: number, educationName: string): number | null {
+  if (!educationName) return null;
+  const rows = db
+    .prepare(
+      `SELECT id, education_name FROM cases
+        WHERE employee_id = ?
+          AND status IN (${ACTIVE_STATUSES.map(() => "?").join(", ")})`,
+    )
+    .all(employeeId, ...ACTIVE_STATUSES) as unknown as { id: number; education_name: string | null }[];
+
+  const hit = rows.find((r) => educationSimilarity(educationName, r.education_name) >= AUTO_MATCH_THRESHOLD);
+  return hit?.id ?? null;
 }
 
 async function ingestOne(

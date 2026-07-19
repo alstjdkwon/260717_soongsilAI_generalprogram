@@ -21,5 +21,21 @@ export function openDb(path = ":memory:"): DB {
   const db = new DatabaseSyncCtor(path);
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(readFileSync(SCHEMA_PATH, "utf8"));
+  migrate(db);
   return db;
+}
+
+/**
+ * 이미 만들어진 DB 파일에 뒤늦게 추가된 컬럼을 채운다.
+ * schema.sql 은 CREATE TABLE IF NOT EXISTS 라서 기존 테이블에는 새 컬럼이 생기지 않는다.
+ */
+function migrate(db: DB): void {
+  addColumn(db, "pending_documents", "hold_reason", "TEXT");
+  addColumn(db, "pending_documents", "declared_kind", "TEXT");
+}
+
+function addColumn(db: DB, table: string, column: string, type: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }

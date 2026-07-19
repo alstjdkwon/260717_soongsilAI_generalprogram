@@ -4,6 +4,7 @@ import {
   type CaseEvent,
   type CaseStatus,
 } from "../domain/status";
+import { normalizeName } from "../domain/similarity";
 
 export interface Employee {
   id: number;
@@ -57,6 +58,18 @@ export function getEmployee(db: DB, id: number): Employee | undefined {
   return db.prepare("SELECT * FROM employees WHERE id = ?").get(id) as
     | Employee
     | undefined;
+}
+
+/**
+ * 이름이 같은 직원을 모두 찾는다(동명이인이면 여럿).
+ * 비교는 정규화 후 JS 에서 한다 — SQL 의 = 는 OCR 이 남긴 공백 차이를 다른 사람으로 보기 때문.
+ * 교직원 수가 적은 내부 도구라 전량 스캔으로 충분하고, 정규화 규칙을 한 곳에 모을 수 있다.
+ */
+export function findEmployeesByName(db: DB, name: string): Employee[] {
+  const target = normalizeName(name);
+  if (!target) return [];
+  const all = db.prepare("SELECT * FROM employees").all() as unknown as Employee[];
+  return all.filter((e) => normalizeName(e.name) === target);
 }
 
 export function createCase(
@@ -183,12 +196,12 @@ export function syncCaseFromApplicationFields(
   }
 
   const current = getEmployee(db, prevEmployeeId);
-  if (current?.name === name) {
+  if (current && normalizeName(current.name) === normalizeName(name)) {
     if (department) db.prepare("UPDATE employees SET department = ? WHERE id = ?").run(department, prevEmployeeId);
     return;
   }
 
-  const existing = db.prepare("SELECT id FROM employees WHERE name = ?").get(name) as { id: number } | undefined;
+  const existing = findEmployeesByName(db, name).find((e) => e.id !== prevEmployeeId);
   if (existing) {
     db.prepare("UPDATE cases SET employee_id = ? WHERE id = ?").run(existing.id, caseId);
     if (department) {

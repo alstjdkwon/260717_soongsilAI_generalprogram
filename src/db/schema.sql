@@ -59,15 +59,17 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
--- 어느 신청 건에 붙일지 애매한 이수증 보관함 (Phase 4).
+-- 자동 처리가 위험한 문서 보관함 (Phase 4, Phase 8에서 신청서까지 확장).
 -- 동명이인·다중 이수대기처럼 자동 매칭이 위험한 경우, 버리지 않고 여기 담아
--- 세영 님이 후보 중 골라 붙이게 한다. 첨부되면 이 행은 삭제되고 documents 로 옮겨진다.
+-- 세영 님이 직접 결정하게 한다. 해결되면 이 행은 삭제되고 documents 로 옮겨진다.
 CREATE TABLE IF NOT EXISTS pending_documents (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind             TEXT NOT NULL,          -- COMPLETION | REPORT
+  kind             TEXT NOT NULL,          -- APPLICATION | COMPLETION | REPORT
   file_path        TEXT,
   detected_kind    TEXT,                   -- AI 문서종류 판별 결과
   extracted_fields TEXT,                   -- JSON: documents.extracted_fields 와 동일 형식
-  candidate_ids    TEXT,                   -- JSON 배열: 후보 case id (유사도 내림차순)
+  candidate_ids    TEXT,                   -- JSON 배열: 후보 id (이수증은 case id, 부서 불일치는 employee id)
+  hold_reason      TEXT,                   -- DEPT_MISMATCH | DUPLICATE, 이수증 보류는 NULL
+  declared_kind    TEXT,                   -- 매니저가 지정한 업로드 칸
   created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );

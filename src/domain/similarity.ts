@@ -49,6 +49,24 @@ export function educationSimilarity(a: string | null | undefined, b: string | nu
   return dice(ca, cb);
 }
 
+/**
+ * 사람 이름 정규화 — 앞뒤 공백·연속 공백·유니코드 표기 차이만 흡수한다.
+ * OCR 이 같은 이름을 "권민성 "/"권 민성" 으로 읽어도 같은 사람으로 보게 하되,
+ * 글자가 다른 이름은 절대 같게 만들지 않는다(동명이인 판단을 흐리면 안 됨).
+ */
+export function normalizeName(s: string | null | undefined): string {
+  return (s ?? "").normalize("NFC").trim().replace(/\s+/g, " ");
+}
+
+/**
+ * 부서명 정규화 — 표기용 구분자(공백·가운뎃점·하이픈·슬래시)만 걷어낸다.
+ * "총무·인사팀" 과 "총무 인사팀" 은 같게, "인사총무팀" 과 "총무인사팀" 은 다르게 남는다
+ * (어순이 다르면 다른 부서일 수 있으므로 사람이 확인하도록 보류로 보낸다).
+ */
+export function normalizeDept(s: string | null | undefined): string {
+  return (s ?? "").normalize("NFC").toLowerCase().replace(/[\s·・\-/,]+/g, "");
+}
+
 /** 후보로 볼 최소 유사도 — 이 아래는 "다른 과정"으로 본다. */
 export const CANDIDATE_THRESHOLD = 0.5;
 /** 다중 후보에서 이 점수 이상이고 2등과 격차가 뚜렷하면 자동 매칭. */
