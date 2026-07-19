@@ -1,5 +1,8 @@
+import type { ReactNode } from "react";
 import { getDb } from "../db/serverDb";
-import { getQueue, getPendingDocuments } from "../repo/queries";
+import { getQueue, getPendingDocuments, getAttachableCases } from "../repo/queries";
+import { getOverdueWeeks } from "../repo/settings";
+import { setOverdueSetting } from "./actions";
 import { GlobalNav, SubNav } from "./_components/Nav";
 import { CaseCard } from "./_components/CaseCard";
 import { Dropzone } from "./_components/Dropzone";
@@ -11,6 +14,8 @@ export default function QueuePage() {
   const db = getDb();
   const q = getQueue(db);
   const pending = getPendingDocuments(db);
+  const attachable = getAttachableCases(db);
+  const overdueWeeks = getOverdueWeeks(db);
   const actionable = q.review.length + q.processing.length;
 
   return (
@@ -32,7 +37,7 @@ export default function QueuePage() {
           </div>
         </section>
 
-        <PendingReview pending={pending} />
+        <PendingReview pending={pending} attachable={attachable} />
 
         <section className="queue" aria-label="할일 큐">
           <QueueColumn
@@ -50,9 +55,17 @@ export default function QueuePage() {
           />
           <QueueColumn
             title="경과 알림"
-            desc="이수 대기가 4주를 넘긴 건. 진행 상황을 확인하세요."
+            desc={`이수 대기가 ${overdueWeeks}주를 넘긴 건. 진행 상황을 확인하세요.`}
             cases={q.overdue}
             emptyText="기한을 넘긴 건이 없습니다."
+            control={
+              <form action={setOverdueSetting} className="overdue-setting">
+                <span>알림 기준</span>
+                <input type="number" name="weeks" defaultValue={overdueWeeks} min={1} max={52} className="overdue-input" aria-label="경과 알림 기준(주)" />
+                <span>주</span>
+                <button type="submit" className="btn-link-muted">적용</button>
+              </form>
+            }
           />
         </section>
       </main>
@@ -66,12 +79,14 @@ function QueueColumn({
   cases,
   emptyText,
   className,
+  control,
 }: {
   title: string;
   desc: string;
   cases: ReturnType<typeof getQueue>["review"];
   emptyText: string;
   className?: string;
+  control?: ReactNode;
 }) {
   return (
     <div className={className}>
@@ -80,6 +95,7 @@ function QueueColumn({
         <span className="count tabnum">{cases.length}</span>
       </div>
       <p className="col-desc">{desc}</p>
+      {control}
       {cases.length === 0 ? (
         <div className="empty">{emptyText}</div>
       ) : (

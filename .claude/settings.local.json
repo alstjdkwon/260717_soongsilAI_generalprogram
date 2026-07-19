@@ -35,7 +35,8 @@
       "Bash(timeout 40 qlmanage -t -s 900 -o /tmp/ data/fixtures/comp-03-han.pdf)",
       "Bash(qlmanage -r)",
       "Bash(NODE_NO_WARNINGS=1 npx vitest run src/repo/ingest.test.ts)",
-      "WebFetch(domain:console.upstage.ai)"
+      "WebFetch(domain:console.upstage.ai)",
+      "Bash(NODE_NO_WARNINGS=1 node *)"
     ]
   }
 }

@@ -140,3 +140,73 @@ export function reapply(
     prev_case_id: prev.id,
   });
 }
+
+export interface CorrectedApplicationFields {
+  name?: string;
+  department?: string;
+  education_name?: string;
+  amount?: number;
+}
+
+/**
+ * 신청서 추출 필드를 사람이 교정했을 때 건·직원 레코드에도 반영한다.
+ *
+ * documents.extracted_fields(JSON) 만 고치면 화면·매칭이 실제로 쓰는 레코드는 그대로라
+ * 교정이 무의미해진다(이수증 매칭은 employees.name 을 본다).
+ *  - 이름이 바뀌면: 같은 이름 직원이 있으면 그 직원으로 건을 옮기고,
+ *    없으면 이 건뿐인 직원은 개명, 다른 건도 가진 직원이면 새 직원을 만들어 옮긴다.
+ *  - 건이 하나도 안 남은 이전 직원(업로드가 만든 임시 레코드)은 지운다.
+ */
+export function syncCaseFromApplicationFields(
+  db: DB,
+  caseId: number,
+  fields: CorrectedApplicationFields,
+): void {
+  const c = getCase(db, caseId);
+  if (!c) return;
+
+  const education = fields.education_name?.trim() || null;
+  const amount = Number.isFinite(fields.amount) ? fields.amount! : null;
+  if (education !== null || amount !== null) {
+    db.prepare(
+      "UPDATE cases SET education_name = COALESCE(?, education_name), expected_cost = COALESCE(?, expected_cost) WHERE id = ?",
+    ).run(education, amount, caseId);
+  }
+
+  const department = fields.department?.trim() || null;
+  const name = fields.name?.trim() || null;
+  const prevEmployeeId = c.employee_id;
+
+  if (!name) {
+    if (department) db.prepare("UPDATE employees SET department = ? WHERE id = ?").run(department, prevEmployeeId);
+    return;
+  }
+
+  const current = getEmployee(db, prevEmployeeId);
+  if (current?.name === name) {
+    if (department) db.prepare("UPDATE employees SET department = ? WHERE id = ?").run(department, prevEmployeeId);
+    return;
+  }
+
+  const existing = db.prepare("SELECT id FROM employees WHERE name = ?").get(name) as { id: number } | undefined;
+  if (existing) {
+    db.prepare("UPDATE cases SET employee_id = ? WHERE id = ?").run(existing.id, caseId);
+    if (department) {
+      db.prepare("UPDATE employees SET department = COALESCE(department, ?) WHERE id = ?").run(department, existing.id);
+    }
+  } else {
+    const others = db
+      .prepare("SELECT COUNT(*) AS n FROM cases WHERE employee_id = ? AND id <> ?")
+      .get(prevEmployeeId, caseId) as { n: number };
+    if (others.n === 0) {
+      // 이 건 하나뿐인 직원이면 그대로 개명 — 옮길 필요 없음.
+      db.prepare("UPDATE employees SET name = ?, department = COALESCE(?, department) WHERE id = ?").run(name, department, prevEmployeeId);
+      return;
+    }
+    const created = createEmployee(db, { name, department: department ?? undefined });
+    db.prepare("UPDATE cases SET employee_id = ? WHERE id = ?").run(created.id, caseId);
+  }
+
+  const left = db.prepare("SELECT COUNT(*) AS n FROM cases WHERE employee_id = ?").get(prevEmployeeId) as { n: number };
+  if (left.n === 0) db.prepare("DELETE FROM employees WHERE id = ?").run(prevEmployeeId);
+}

@@ -36,6 +36,20 @@ describe("computeFlags — 신뢰도", () => {
     expect(f.minConfidence).toBe("HIGH");
     expect(f.needsReview).toBe(false);
   });
+
+  it("이수증에 없는 항목(수강료)은 필드 자체가 빠지므로 검토 필요로 가지 않는다", () => {
+    // 이수증에는 보통 수강료가 없다 — 추출 단계에서 present=false 인 항목은 아예 제외된다.
+    // 없는 항목을 저신뢰로 취급하면 멀쩡한 서류가 '원본 대조 필요'로 잘못 뜬다.
+    const f = computeFlags({
+      status: "AWAITING_REFUND",
+      now: NOW,
+      application: fields({ name: ["홍길동", "HIGH"], education_name: ["엑셀 실무", "HIGH"], amount: [70000, "HIGH"] }),
+      completion: fields({ name: ["홍길동", "HIGH"], education_name: ["엑셀 실무", "HIGH"], hours: [16, "HIGH"] }),
+    });
+    expect(f.minConfidence).toBe("HIGH");
+    expect(f.mismatches).toHaveLength(0); // 한쪽에 금액이 없으면 대조도 건너뛴다
+    expect(f.needsReview).toBe(false);
+  });
 });
 
 describe("computeFlags — 대조 불일치", () => {

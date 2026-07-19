@@ -13,17 +13,21 @@ import type { DetectedKind } from "./types";
  */
 
 // value 는 문자열로 받고(스키마 단순화), 금액·시간만 숫자로 변환한다.
+// present 는 "그 항목이 이 문서에 아예 없는가"를 가른다 — 없는 항목(이수증의 수강료 등)을
+// 추출 실패(저신뢰)로 오인하면 멀쩡한 서류가 '원본 대조 필요'로 잘못 뜬다.
 const RAW_FIELD = {
   type: "object",
   properties: {
+    present: { type: "boolean" },
     value: { type: ["string", "null"] },
     confidence: { type: "string", enum: ["HIGH", "MID", "LOW"] },
   },
-  required: ["value", "confidence"],
+  required: ["present", "value", "confidence"],
   additionalProperties: false,
 } as const;
 
 interface RawField {
+  present: boolean;
   value: string | null;
   confidence: Confidence;
 }
@@ -39,6 +43,8 @@ function schemaOf(keys: string[]): Record<string, unknown> {
 
 function toField(raw: RawField | undefined, numeric: boolean): ExtractedField | undefined {
   if (!raw) return undefined;
+  // 문서에 원래 없는 항목은 필드 자체를 빼서 신뢰도 계산·대조에서 제외한다.
+  if (!raw.present) return undefined;
   const trimmed = raw.value?.trim() ?? "";
   const empty = trimmed === "";
   let value: string | number | null = empty ? null : trimmed;
@@ -61,8 +67,17 @@ export async function classifyKind(text: string): Promise<DetectedKind> {
     },
     system:
       "너는 한국 대학의 교직원 자율교육 서류를 분류한다. " +
-      "수강 '신청서'면 APPLICATION, '이수증/수료증/이수확인서'면 COMPLETION, '결과보고서'면 REPORT, " +
-      "판단이 어려우면 UNKNOWN. 반드시 하나만 고른다.",
+      "제목이 아니라 **문서의 목적과 시제**로 판단하라 — 기관마다 양식 이름이 제각각이라 제목은 믿을 수 없다.\n" +
+      "- APPLICATION: 교육을 듣기 전에 승인·지원을 받으려는 문서. 신청자·교육명·교육기간·수강료와 함께 " +
+      "수강 사유나 기대 효과·업무 적용 계획이 미래형('~하고자 합니다', '~할 예정')으로 적혀 있다. " +
+      "제목이 '교육보고서', '교육계획서', '수강 품의' 등이어도 내용이 사전 승인 요청이면 APPLICATION 이다.\n" +
+      "- COMPLETION: 교육을 마쳤음을 발급기관이 증명하는 문서(이수증·수료증·이수확인서). " +
+      "발급기관·이수시간·수료일·직인이 있고 '위 사람은 ~ 이수하였음' 같은 증명 문구가 핵심이다.\n" +
+      "- REPORT: 교육을 마친 뒤 본인이 배운 내용·결과를 사후 보고하는 문서. 과거형('~을 배웠다', '~에 적용했다')으로 " +
+      "실제 수강 결과를 서술한다.\n" +
+      "- UNKNOWN: 위 셋 어디에도 해당하지 않을 때만.\n" +
+      "핵심 구분: 교육을 아직 안 들었고 승인을 구하는 문서면 APPLICATION, 다 듣고 증명받은 문서면 COMPLETION, " +
+      "다 듣고 스스로 결과를 보고하는 문서면 REPORT. 반드시 하나만 고른다.",
     user: `다음 OCR 텍스트의 문서 종류를 판별하라:\n\n${text}`,
     effort: "low",
   });
@@ -79,11 +94,14 @@ async function extractFields(
     schema: schemaOf(keys as string[]),
     system:
       `너는 한국 대학 교직원 자율교육 ${label}에서 필드를 추출한다. ` +
-      "각 필드에 값과 신뢰도(HIGH/MID/LOW)를 매긴다. " +
-      "OCR 텍스트에 값이 또렷하면 HIGH, 일부 가려지거나 뭉개져 애매하면 MID, " +
-      "가림·번짐·중복표기로 확신이 어렵거나 값이 안 보이면 LOW. " +
-      "추정하지 말고, 안 보이면 value 를 null 로 두고 confidence 를 LOW 로 하라. " +
-      "금액·시간은 숫자만(단위·콤마 제외).",
+      "각 필드마다 present / value / confidence 를 매긴다.\n" +
+      "present 는 '그 항목이 이 문서에 원래 있는가'다 — 추출 성공 여부가 아니다.\n" +
+      "- 문서에 그 항목 자체가 없으면(항목명도 값도 없음) present=false, value=null, confidence=LOW. " +
+      "예: 이수증·수료증에는 수강료가 적히지 않는 경우가 많다. 이건 정상이며 오류가 아니다.\n" +
+      "- 항목은 있는데 가려짐·번짐·잘림으로 값을 못 읽으면 present=true, value=null, confidence=LOW. " +
+      "이건 사람이 원본을 확인해야 하는 경우다.\n" +
+      "- 값을 읽었으면 present=true 이고, 또렷하면 HIGH, 일부 흐릿해 애매하면 MID.\n" +
+      "추정해서 지어내지 마라. 금액·시간은 숫자만(단위·콤마 제외).",
     user: `다음 OCR 텍스트에서 필드를 추출하라:\n\n${text}`,
     effort: "medium",
   });

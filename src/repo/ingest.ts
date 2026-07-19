@@ -24,8 +24,7 @@ import type { DocumentParser, InputFile, ParsedDocument } from "../ai/types";
 export type IngestOutcome =
   | "CREATED_CASE" // 신청서 → 새 건
   | "MATCHED_CASE" // 이수증 → 기존 건 자동 매칭
-  | "PENDING_REVIEW" // 이수증인데 후보가 여럿 → 세영 님이 고르도록 보관
-  | "UNMATCHED" // 이수증인데 이름이 맞는 이수 대기 건이 아예 없음
+  | "PENDING_REVIEW" // 이수증인데 자동 매칭이 위험 → 보관함에서 세영 님이 선택
   | "UNKNOWN"; // 문서 종류 판별 실패
 
 export interface IngestResult {
@@ -178,7 +177,13 @@ async function ingestOne(
         note: `이수 대기 후보 ${m.candidates.length}건 — 어느 건인지 확인 필요`,
       };
     }
-    return { ...base, outcome: "UNMATCHED", note: `맞는 이수 대기 건 없음 — 이름·교육명 확인 필요` };
+    // 이름이 맞는 건이 없어도 버리지 않는다 — 보관함에 담아 세영 님이 직접 붙일 수 있게.
+    insertPendingDocument(db, kind, parsed, filePath, []);
+    return {
+      ...base,
+      outcome: "PENDING_REVIEW",
+      note: "맞는 이수 대기 건 없음 — 보관함에서 직접 골라 붙이세요",
+    };
   }
 
   return { ...base, outcome: "UNKNOWN", note: "문서 종류를 판별하지 못함 — 수동 확인 필요" };

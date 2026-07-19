@@ -1,4 +1,5 @@
 import type { DB } from "../db/db";
+import { getOverdueWeeks } from "./settings";
 import { CASE_STATUS, type CaseStatus } from "../domain/status";
 import {
   bucketOf,
@@ -23,12 +24,16 @@ export interface CaseView {
   statusLabel: string;
   rejectReason: string | null;
   prevCaseId: number | null;
+  /** 재신청 건이면 이전 반려 사유(카드·상세에 표시). */
+  prevRejectReason: string | null;
   createdAt: string;
   approvedAt: string | null;
   docsArrivedAt: string | null;
   application?: ExtractedFields;
   completion?: ExtractedFields;
   applicationDocId: number | null;
+  /** 이 건에 딸린 원본 문서들(신청서·이수증…) — 화면에서 보고 고칠 대상. */
+  documents: CaseDocument[];
   fitRationale: string | null;
   fitConfidence: Confidence | null;
   flags: CaseFlags;
@@ -60,6 +65,15 @@ interface DocRow {
   case_id: number;
   kind: string;
   extracted_fields: string | null;
+  file_path: string | null;
+}
+
+/** 건에 딸린 원본 문서 하나 — 상세화면의 PDF 뷰어·수기 수정 대상. */
+export interface CaseDocument {
+  id: number;
+  kind: string;
+  filePath: string | null;
+  fields: ExtractedFields;
 }
 
 function parseFields(json: string | null): ExtractedFields | undefined {
@@ -81,7 +95,14 @@ interface ReviewInfo {
   confidence: Confidence | null;
 }
 
-function buildView(row: CaseRow, docs: DocRow[], review: ReviewInfo | undefined, now: number): CaseView {
+function buildView(
+  row: CaseRow,
+  docs: DocRow[],
+  review: ReviewInfo | undefined,
+  now: number,
+  overdueWeeks: number,
+  prevRejectReason: string | null,
+): CaseView {
   const appDoc = docs.find((d) => d.kind === "APPLICATION");
   const application = parseFields(appDoc?.extracted_fields ?? null);
   const completion = parseFields(docs.find((d) => d.kind === "COMPLETION")?.extracted_fields ?? null);
@@ -91,6 +112,7 @@ function buildView(row: CaseRow, docs: DocRow[], review: ReviewInfo | undefined,
     completion,
     approvedAt: row.approved_at,
     now,
+    overdueWeeks,
   });
   return {
     id: row.id,
@@ -105,12 +127,19 @@ function buildView(row: CaseRow, docs: DocRow[], review: ReviewInfo | undefined,
     statusLabel: CASE_STATUS[row.status],
     rejectReason: row.reject_reason,
     prevCaseId: row.prev_case_id,
+    prevRejectReason,
     createdAt: row.created_at,
     approvedAt: row.approved_at,
     docsArrivedAt: row.docs_arrived_at,
     application,
     completion,
     applicationDocId: appDoc?.id ?? null,
+    documents: docs.map((d) => ({
+      id: d.id,
+      kind: d.kind,
+      filePath: d.file_path,
+      fields: parseFields(d.extracted_fields) ?? {},
+    })),
     fitRationale: review?.rationale ?? null,
     fitConfidence: review?.confidence ?? null,
     flags,
@@ -133,7 +162,7 @@ function loadDocs(db: DB, caseIds: number[]): Map<number, DocRow[]> {
   if (caseIds.length === 0) return byCase;
   const placeholders = caseIds.map(() => "?").join(",");
   const rows = db
-    .prepare(`SELECT id, case_id, kind, extracted_fields FROM documents WHERE case_id IN (${placeholders})`)
+    .prepare(`SELECT id, case_id, kind, extracted_fields, file_path FROM documents WHERE case_id IN (${placeholders})`)
     .all(...caseIds) as unknown as DocRow[];
   for (const r of rows) {
     const list = byCase.get(r.case_id) ?? [];
@@ -159,12 +188,32 @@ function loadReviews(db: DB, caseIds: number[]): Map<number, ReviewInfo> {
   return byCase;
 }
 
+/** 재신청 건들의 이전(반려) 건 사유를 한 번에 — prev_case_id → 반려 사유. */
+function loadPrevRejectReasons(db: DB, prevIds: number[]): Map<number, string | null> {
+  const byId = new Map<number, string | null>();
+  const ids = [...new Set(prevIds)];
+  if (ids.length === 0) return byId;
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = db
+    .prepare(`SELECT id, reject_reason FROM cases WHERE id IN (${placeholders})`)
+    .all(...ids) as { id: number; reject_reason: string | null }[];
+  for (const r of rows) byId.set(r.id, r.reject_reason);
+  return byId;
+}
+
 export function getAllCaseViews(db: DB, now = Date.now()): CaseView[] {
   const rows = db.prepare(CASE_SELECT).all() as unknown as CaseRow[];
   const ids = rows.map((r) => r.id);
   const docs = loadDocs(db, ids);
   const reviews = loadReviews(db, ids);
-  return rows.map((r) => buildView(r, docs.get(r.id) ?? [], reviews.get(r.id), now));
+  const overdueWeeks = getOverdueWeeks(db);
+  const prevReasons = loadPrevRejectReasons(
+    db,
+    rows.map((r) => r.prev_case_id).filter((x): x is number => x != null),
+  );
+  return rows.map((r) =>
+    buildView(r, docs.get(r.id) ?? [], reviews.get(r.id), now, overdueWeeks, r.prev_case_id != null ? prevReasons.get(r.prev_case_id) ?? null : null),
+  );
 }
 
 export function getCaseView(db: DB, id: number, now = Date.now()): CaseView | undefined {
@@ -172,7 +221,8 @@ export function getCaseView(db: DB, id: number, now = Date.now()): CaseView | un
   if (!row) return undefined;
   const docs = loadDocs(db, [id]).get(id) ?? [];
   const review = loadReviews(db, [id]).get(id);
-  return buildView(row, docs, review, now);
+  const prevReason = row.prev_case_id != null ? loadPrevRejectReasons(db, [row.prev_case_id]).get(row.prev_case_id) ?? null : null;
+  return buildView(row, docs, review, now, getOverdueWeeks(db), prevReason);
 }
 
 export interface QueueData {
@@ -282,4 +332,29 @@ function safeParseIds(json: string | null): number[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * 보관 중인 이수증을 수동으로 붙일 수 있는 건 목록 — 이수 대기이고 아직 이수증이 없는 건 전부.
+ * 이름 매칭이 실패했을 때(오탈자·OCR 실패) 세영 님이 직접 고르는 데 쓴다.
+ */
+export function getAttachableCases(db: DB): PendingCandidate[] {
+  const rows = db
+    .prepare(
+      `SELECT c.id, e.name, c.education_name, c.expected_cost
+         FROM cases c
+         JOIN employees e ON e.id = c.employee_id
+        WHERE c.status = 'IN_PROGRESS'
+          AND NOT EXISTS (
+            SELECT 1 FROM documents d WHERE d.case_id = c.id AND d.kind = 'COMPLETION'
+          )
+        ORDER BY e.name ASC`,
+    )
+    .all() as { id: number; name: string; education_name: string | null; expected_cost: number | null }[];
+  return rows.map((r) => ({
+    caseId: r.id,
+    name: r.name,
+    educationName: r.education_name,
+    expectedCost: r.expected_cost,
+  }));
 }

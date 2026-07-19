@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "../db/serverDb";
-import { transitionCase, reapply } from "../repo/cases";
+import { transitionCase, reapply, syncCaseFromApplicationFields } from "../repo/cases";
 import { TransitionError } from "../domain/status";
 import { ingestFiles, attachPending, dismissPending, type IngestResult } from "../repo/ingest";
 import { LlmParser } from "../ai/llmParser";
@@ -13,6 +13,7 @@ import type { InputFile } from "../ai/types";
 import { getCaseView } from "../repo/queries";
 import { generateFitRationale } from "../ai/rationale";
 import { getRecentCorrections, saveRationale, saveCorrection } from "../repo/reviews";
+import { setOverdueWeeks } from "../repo/settings";
 
 function refresh(caseId: number) {
   revalidatePath("/");
@@ -59,24 +60,34 @@ export async function reapplyCase(formData: FormData) {
   redirect(`/case/${next.id}`);
 }
 
-/** 저신뢰 필드를 원본 대조 후 수정. documents.extracted_fields JSON 을 패치한다. */
+/**
+ * 저신뢰 필드를 원본 대조 후 수정. documents.extracted_fields JSON 을 패치하고,
+ * 신청서라면 건·직원 레코드에도 반영한다(교정이 화면·매칭에 실제로 먹히도록).
+ */
 export async function saveFields(formData: FormData) {
   const caseId = Number(formData.get("caseId"));
   const documentId = Number(formData.get("documentId"));
   const db = getDb();
   const row = db
-    .prepare("SELECT extracted_fields FROM documents WHERE id = ?")
-    .get(documentId) as { extracted_fields: string | null } | undefined;
+    .prepare("SELECT kind, extracted_fields FROM documents WHERE id = ?")
+    .get(documentId) as { kind: string; extracted_fields: string | null } | undefined;
   if (!row?.extracted_fields) return;
 
   const fields = JSON.parse(row.extracted_fields) as Record<
     string,
     { value: string | number | null; confidence: string }
   >;
-  for (const key of Object.keys(fields)) {
+  // 추출에 없던 항목도 폼에서 채울 수 있으므로, 기존 키가 아니라 화면이 내보내는 항목 전체를 훑는다.
+  const EDITABLE = ["name", "department", "education_name", "amount", "hours"];
+  for (const key of EDITABLE) {
     const raw = formData.get(`f_${key}`);
     if (raw == null) continue;
     const text = String(raw).trim();
+    if (text === "") {
+      // 빈 칸 = 그 문서에 없는 항목 → 신뢰도 계산·대조에서 빠지도록 키를 지운다.
+      delete fields[key];
+      continue;
+    }
     const numeric = key === "amount" || key === "hours";
     fields[key] = {
       value: numeric ? Number(text.replace(/[^\d.-]/g, "")) || 0 : text,
@@ -87,6 +98,20 @@ export async function saveFields(formData: FormData) {
     JSON.stringify(fields),
     documentId,
   );
+
+  if (row.kind === "APPLICATION") {
+    const str = (k: string) => {
+      const v = fields[k]?.value;
+      return v == null ? undefined : String(v).trim() || undefined;
+    };
+    const amountRaw = fields.amount?.value;
+    syncCaseFromApplicationFields(db, caseId, {
+      name: str("name"),
+      department: str("department"),
+      education_name: str("education_name"),
+      amount: amountRaw == null ? undefined : Number(amountRaw) || undefined,
+    });
+  }
   refresh(caseId);
 }
 
@@ -166,6 +191,14 @@ export async function correctRationale(formData: FormData) {
   if (!text) return;
   saveCorrection(getDb(), caseId, text);
   refresh(caseId);
+}
+
+/** 이수 대기 경과 알림 기준(주)을 조정한다(Phase 6). */
+export async function setOverdueSetting(formData: FormData) {
+  const weeks = Number(formData.get("weeks"));
+  if (Number.isFinite(weeks)) setOverdueWeeks(getDb(), weeks);
+  revalidatePath("/");
+  revalidatePath("/board");
 }
 
 /** 보관 중인 이수증을 세영 님이 고른 건에 첨부한다(Phase 4 후보 선택). */

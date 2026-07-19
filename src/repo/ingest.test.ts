@@ -3,7 +3,7 @@ import { openDb, type DB } from "../db/db";
 import { FakeParser } from "../ai/fakeParser";
 import { ingestFiles, attachPending, dismissPending } from "./ingest";
 import { transitionCase } from "./cases";
-import { getCaseView, getAllCaseViews, getPendingDocuments } from "./queries";
+import { getCaseView, getAllCaseViews, getPendingDocuments, getAttachableCases } from "./queries";
 import type { ExtractedFields } from "../domain/flags";
 import type { InputFile, ParsedDocument } from "../ai/types";
 
@@ -79,14 +79,19 @@ describe("ingestFiles", () => {
     expect(view.completion?.hours?.value).toBe(16);
   });
 
-  it("맞는 이수 대기 건이 없는 이수증은 미매칭으로 리포트하고 DB를 건드리지 않는다", async () => {
+  it("맞는 이수 대기 건이 없는 이수증도 버리지 않고 보관함에 담는다(수동 첨부용)", async () => {
     const parser = new FakeParser({
       "orphan.pdf": completion(fields({ name: ["없는사람", "HIGH"], education_name: ["무엇", "HIGH"], amount: [1000, "HIGH"] })),
     });
     const [r] = await ingestFiles(db, parser, [file("orphan.pdf")]);
-    expect(r.outcome).toBe("UNMATCHED");
+    expect(r.outcome).toBe("PENDING_REVIEW");
     expect(r.caseId).toBeUndefined();
-    expect(getAllCaseViews(db)).toHaveLength(0);
+    expect(getAllCaseViews(db)).toHaveLength(0); // 건은 만들지 않음
+
+    const pending = getPendingDocuments(db);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].candidates).toHaveLength(0); // 후보 없음 → UI가 전체 목록에서 고르게 함
+    expect(pending[0].name).toBe("없는사람");
   });
 
   it("승인 전(심사 대기) 건만 있으면 이수증은 매칭되지 않는다", async () => {
@@ -96,7 +101,7 @@ describe("ingestFiles", () => {
     });
     await ingestFiles(db, parser, [file("app.pdf")]); // 승인 안 함 → SCREENING
     const [cert] = await ingestFiles(db, parser, [file("cert.pdf")]);
-    expect(cert.outcome).toBe("UNMATCHED");
+    expect(cert.outcome).toBe("PENDING_REVIEW"); // 자동 첨부 안 됨 — 보관함에서 처리
   });
 
   it("판별 실패(UNKNOWN)는 DB를 건드리지 않고 사유를 돌려준다", async () => {
@@ -181,6 +186,29 @@ describe("attachPending / dismissPending", () => {
     expect(getCaseView(db, a2)!.status).toBe("AWAITING_REFUND");
     expect(getCaseView(db, a2)!.completion?.hours?.value).toBe(8);
     expect(getCaseView(db, a1)!.status).toBe("IN_PROGRESS"); // 안 고른 건은 그대로
+    expect(getPendingDocuments(db)).toHaveLength(0);
+  });
+
+  it("이름이 안 맞아 후보가 없어도, 이수 대기 건 목록에서 직접 골라 붙일 수 있다", async () => {
+    const db = openDb();
+    const parser = new FakeParser({
+      "app.pdf": application(fields({ name: ["권민성", "HIGH"], education_name: ["LangChain 기본기", "HIGH"], amount: [3000, "HIGH"] })),
+      // OCR 이 이름을 못 읽어 다른 이름으로 들어온 이수증
+      "cert.pdf": completion(fields({ name: ["(이름 미상)", "HIGH"], education_name: ["LangChain 기본기", "HIGH"], amount: [3000, "HIGH"], hours: [4, "HIGH"] })),
+    });
+    const [app] = await ingestFiles(db, parser, [file("app.pdf")]);
+    transitionCase(db, app.caseId!, "APPROVE");
+    const [cert] = await ingestFiles(db, parser, [file("cert.pdf")]);
+    expect(cert.outcome).toBe("PENDING_REVIEW");
+
+    const pendingId = getPendingDocuments(db)[0].id;
+    const options = getAttachableCases(db);
+    expect(options.map((o) => o.caseId)).toContain(app.caseId); // 목록에 노출
+
+    attachPending(db, pendingId, app.caseId!); // 사람이 직접 선택
+    const view = getCaseView(db, app.caseId!)!;
+    expect(view.status).toBe("AWAITING_REFUND");
+    expect(view.completion?.hours?.value).toBe(4);
     expect(getPendingDocuments(db)).toHaveLength(0);
   });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState } from "react";
+import { startTransition, useActionState, useRef, useState } from "react";
 import Link from "next/link";
 import { uploadDocuments, type UploadState } from "../actions";
 import type { IngestResult } from "../../repo/ingest";
@@ -11,7 +11,6 @@ const OUTCOME: Record<IngestResult["outcome"], { label: string; cls: string }> =
   CREATED_CASE: { label: "새 건 생성", cls: "ok" },
   MATCHED_CASE: { label: "기존 건 매칭", cls: "ok" },
   PENDING_REVIEW: { label: "후보 확인 필요", cls: "warn" },
-  UNMATCHED: { label: "미매칭", cls: "warn" },
   UNKNOWN: { label: "판별 실패", cls: "warn" },
 };
 
@@ -24,7 +23,7 @@ export function Dropzone() {
     if (!files || files.length === 0) return;
     const fd = new FormData();
     for (const f of files) fd.append("files", f);
-    action(fd);
+    startTransition(() => action(fd));
   }
 
   return (

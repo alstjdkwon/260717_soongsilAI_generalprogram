@@ -26,11 +26,31 @@ export function SubNav({ view }: { view: "queue" | "board" }) {
           <span className="subnav-soon">인사팀주관교육<span>준비중</span></span>
           <span className="subnav-soon">일반교육<span>준비중</span></span>
         </div>
-        <div className="viewswitch">
-          <Link href="/" className={view === "queue" ? "active" : ""}>할일 큐</Link>
-          <Link href="/board" className={view === "board" ? "active" : ""}>전체 현황</Link>
+        <div className="subnav-right">
+          <div className="viewswitch">
+            <Link href="/" className={view === "queue" ? "active" : ""}>할일 큐</Link>
+            <Link href="/board" className={view === "board" ? "active" : ""}>전체 현황</Link>
+          </div>
+          <a href="/api/export" className="btn btn-ghost btn-sm export-link">
+            <ExportIcon />
+            엑셀로 내보내기
+          </a>
         </div>
       </div>
     </div>
+  );
+}
+
+function ExportIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M12 3v12m0 0-4-4m4 4 4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

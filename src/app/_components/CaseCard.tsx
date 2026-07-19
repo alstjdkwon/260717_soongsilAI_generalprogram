@@ -20,6 +20,13 @@ export function CaseCard({ c }: { c: CaseView }) {
 
       <div className="edu">{c.educationName}</div>
 
+      {c.prevCaseId != null && (
+        <div className="reapply-note">
+          <span className="reapply-tag">재신청</span>
+          <span>이전 반려: {c.prevRejectReason ?? "사유 없음"}</span>
+        </div>
+      )}
+
       <div className="card-meta">
         <span>{c.statusLabel}</span>
         {c.remainingPoints != null && (

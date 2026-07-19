@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "../../../db/serverDb";
@@ -34,15 +36,27 @@ function fmtVal(key: keyof ExtractedFields, value: string | number | null): stri
   return String(value);
 }
 
+const KIND_LABEL: Record<string, string> = {
+  APPLICATION: "자율교육 신청서",
+  COMPLETION: "이수증",
+  REPORT: "결과보고서",
+};
+
+/** 원본 파일이 실제로 디스크에 있는지 — 시드 문서는 없으므로 팩시밀리로 폴백한다. */
+function hasFile(filePath: string | null): boolean {
+  if (!filePath) return false;
+  return existsSync(join(process.cwd(), "data", filePath));
+}
+
 export default async function CaseDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ err?: string }>;
+  searchParams: Promise<{ err?: string; doc?: string }>;
 }) {
   const { id } = await params;
-  const { err } = await searchParams;
+  const { err, doc } = await searchParams;
   const db = getDb();
   const c = getCaseView(db, Number(id));
   if (!c) notFound();
@@ -54,9 +68,14 @@ export default async function CaseDetailPage({
     : undefined;
 
   const showCompare = c.status === "AWAITING_REFUND" && c.completion;
-  const editable = c.status === "SCREENING" || c.status === "IN_PROGRESS";
-  const leftFields = showCompare ? c.completion! : c.application;
-  const leftKind = showCompare ? "이수증 / 결과보고서" : "자율교육 신청서";
+
+  // 어떤 문서를 펼쳐 볼지 — 지정이 없으면 지금 단계에서 볼 문서를 기본값으로.
+  const docs = c.documents;
+  const preferredKind = showCompare ? "COMPLETION" : "APPLICATION";
+  const selected =
+    docs.find((d) => String(d.id) === doc) ??
+    docs.find((d) => d.kind === preferredKind) ??
+    docs[0];
 
   return (
     <>
@@ -90,40 +109,58 @@ export default async function CaseDetailPage({
         )}
 
         <div className="split">
-          {/* 좌: 원본 문서 팩시밀리 */}
+          {/* 좌: 업로드한 원본 PDF (없으면 팩시밀리) */}
           <div className="paper">
             <div className="paper-bar">
-              <span className="t-caption-strong">{leftKind}</span>
-              <span className="t-fine muted">임의 생성 문서</span>
+              <div className="doc-tabs">
+                {docs.map((d) => (
+                  <Link
+                    key={d.id}
+                    href={`/case/${c.id}?doc=${d.id}`}
+                    className={`doc-tab${selected?.id === d.id ? " active" : ""}`}
+                  >
+                    {KIND_LABEL[d.kind] ?? d.kind}
+                  </Link>
+                ))}
+                {docs.length === 0 && <span className="t-caption-strong">문서 없음</span>}
+              </div>
+              {selected && hasFile(selected.filePath) && (
+                <a
+                  href={`/api/documents/${selected.id}/file`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="t-fine doc-open"
+                >
+                  새 탭에서 열기 ↗
+                </a>
+              )}
             </div>
-            <div className="paper-body">
-              <p className="paper-title">{leftKind}</p>
-              <p className="paper-sub">숭실대학교 · 교직원 자율교육</p>
-              <dl style={{ margin: 0 }}>
-                {FIELD_ORDER.map((k) => {
-                  const f = leftFields?.[k];
-                  if (!f) return null;
-                  return (
-                    <div className="paper-row" key={k}>
-                      <dt>{FIELD_LABEL[k]}</dt>
-                      <dd>{fmtVal(k, f.value)}</dd>
-                    </div>
-                  );
-                })}
-              </dl>
-              <p className="paper-stamp">스캔본 · {shortDate(c.docsArrivedAt ?? c.createdAt)}</p>
-            </div>
+
+            {selected && hasFile(selected.filePath) ? (
+              <iframe
+                src={`/api/documents/${selected.id}/file`}
+                className="paper-pdf"
+                title={`${KIND_LABEL[selected.kind] ?? selected.kind} 원본`}
+              />
+            ) : (
+              <Facsimile c={c} fields={selected?.fields} kindLabel={selected ? KIND_LABEL[selected.kind] ?? selected.kind : "문서"} />
+            )}
           </div>
 
-          {/* 우: AI 추출 / 대조 / 근거 */}
+          {/* 우: 추출 필드 수정 / 대조 / 근거 */}
           <div>
-            {showCompare ? (
-              <CompareTable c={c} />
-            ) : editable && c.application && c.applicationDocId ? (
-              <FieldsForm caseId={c.id} documentId={c.applicationDocId} fields={c.application} />
+            {selected ? (
+              <FieldsForm
+                caseId={c.id}
+                documentId={selected.id}
+                kindLabel={KIND_LABEL[selected.kind] ?? selected.kind}
+                fields={selected.fields}
+              />
             ) : (
-              <ReadOnlyFields fields={leftFields} />
+              <div className="panel"><p className="muted t-caption">이 건에는 업로드된 문서가 없습니다.</p></div>
             )}
+
+            {showCompare && <CompareTable c={c} />}
 
             {c.status === "SCREENING" && <FitRationalePanel c={c} />}
 
@@ -155,62 +192,90 @@ function StatusBanner({ c }: { c: CaseView }) {
   return null;
 }
 
+/** 원본 파일이 없는 문서(시드)용 — 추출값으로 문서 모양을 흉내 낸다. */
+function Facsimile({
+  c,
+  fields,
+  kindLabel,
+}: {
+  c: CaseView;
+  fields?: ExtractedFields;
+  kindLabel: string;
+}) {
+  return (
+    <div className="paper-body">
+      <p className="paper-title">{kindLabel}</p>
+      <p className="paper-sub">숭실대학교 · 교직원 자율교육</p>
+      <dl style={{ margin: 0 }}>
+        {FIELD_ORDER.map((k) => {
+          const f = fields?.[k];
+          if (!f) return null;
+          return (
+            <div className="paper-row" key={k}>
+              <dt>{FIELD_LABEL[k]}</dt>
+              <dd>{fmtVal(k, f.value)}</dd>
+            </div>
+          );
+        })}
+      </dl>
+      <p className="paper-stamp">원본 파일 없음 · 임의 생성 데이터 · {shortDate(c.docsArrivedAt ?? c.createdAt)}</p>
+    </div>
+  );
+}
+
+/**
+ * 추출 필드 확인·수정.
+ * OCR 이 못 읽어 빠진 항목도 빈 칸으로 내보내, 왼쪽 원본을 보고 직접 채울 수 있게 한다.
+ * 빈 칸으로 저장하면 "그 문서에 없는 항목"으로 처리된다.
+ */
 function FieldsForm({
   caseId,
   documentId,
+  kindLabel,
   fields,
 }: {
   caseId: number;
   documentId: number;
+  kindLabel: string;
   fields: ExtractedFields;
 }) {
   return (
     <form action={saveFields} className="panel">
       <input type="hidden" name="caseId" value={caseId} />
       <input type="hidden" name="documentId" value={documentId} />
-      <h3 className="t-body-strong">AI 추출 필드 <span className="muted t-fine">· 저신뢰 필드는 원본과 대조해 고치세요</span></h3>
+      <h3 className="t-body-strong">
+        {kindLabel} 추출 필드{" "}
+        <span className="muted t-fine">· 왼쪽 원본과 대조해 고치거나 빠진 값을 직접 입력하세요</span>
+      </h3>
       {FIELD_ORDER.map((k) => {
         const f = fields[k];
-        if (!f) return null;
-        const low = f.confidence === "LOW";
+        const missing = !f || f.value == null || f.value === "";
+        const low = f?.confidence === "LOW";
         return (
-          <div className={`field${low ? " low" : ""}`} key={k}>
+          <div className={`field${low || missing ? " low" : ""}`} key={k}>
             <label htmlFor={`f_${k}`}>{FIELD_LABEL[k]}</label>
             <input
               id={`f_${k}`}
               name={`f_${k}`}
-              defaultValue={f.value == null ? "" : String(f.value)}
+              defaultValue={f?.value == null ? "" : String(f.value)}
+              placeholder={missing ? "미인식 — 원본 보고 입력" : undefined}
             />
-            <span className={`conf ${f.confidence}`}>{confLabel(f.confidence)}</span>
+            {f ? (
+              <span className={`conf ${f.confidence}`}>{confLabel(f.confidence)}</span>
+            ) : (
+              <span className="conf none">—</span>
+            )}
           </div>
         );
       })}
       <div className="actions">
+        <span className="muted t-fine" style={{ marginRight: "auto" }}>빈 칸으로 두면 그 문서에 없는 항목으로 처리됩니다.</span>
         <button type="submit" className="btn btn-ghost">확인·저장</button>
       </div>
     </form>
   );
 }
 
-function ReadOnlyFields({ fields }: { fields?: ExtractedFields }) {
-  if (!fields) return null;
-  return (
-    <div className="panel">
-      <h3 className="t-body-strong">추출 필드</h3>
-      {FIELD_ORDER.map((k) => {
-        const f = fields[k];
-        if (!f) return null;
-        return (
-          <div className="field" key={k}>
-            <label>{FIELD_LABEL[k]}</label>
-            <span className="val">{fmtVal(k, f.value)}</span>
-            <span className={`conf ${f.confidence}`}>{confLabel(f.confidence)}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 function CompareTable({ c }: { c: CaseView }) {
   const mismatchFields = new Set(c.flags.mismatches.map((m) => m.field));

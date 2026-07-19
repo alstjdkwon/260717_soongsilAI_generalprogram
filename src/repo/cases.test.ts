@@ -4,8 +4,10 @@ import {
   createEmployee,
   createCase,
   getCase,
+  getEmployee,
   transitionCase,
   reapply,
+  syncCaseFromApplicationFields,
 } from "./cases";
 import { TransitionError } from "../domain/status";
 
@@ -97,5 +99,52 @@ describe("재신청", () => {
   it("반려되지 않은 건은 재신청할 수 없다", () => {
     const c = seedCase();
     expect(() => reapply(db, c.id)).toThrowError(/반려된 건만/);
+  });
+});
+
+describe("syncCaseFromApplicationFields — 교정을 건·직원에 반영", () => {
+  it("이름 교정 시 같은 이름의 기존 직원으로 건을 옮기고 빈 직원은 지운다", () => {
+    const real = createEmployee(db, { name: "권민성", department: "인사총무팀" });
+    const placeholder = createEmployee(db, { name: "(이름 미상)", department: "인사총무팀" });
+    const c = createCase(db, { employee_id: placeholder.id, education_name: "교육" });
+
+    syncCaseFromApplicationFields(db, c.id, { name: "권민성" });
+
+    expect(getCase(db, c.id)!.employee_id).toBe(real.id);
+    expect(getEmployee(db, placeholder.id)).toBeUndefined(); // 건 없는 임시 직원 정리
+  });
+
+  it("같은 이름 직원이 없고 건이 하나뿐이면 그 직원을 개명한다", () => {
+    const emp = createEmployee(db, { name: "(이름 미상)" });
+    const c = createCase(db, { employee_id: emp.id, education_name: "교육" });
+
+    syncCaseFromApplicationFields(db, c.id, { name: "권민성", department: "인사총무팀" });
+
+    expect(getCase(db, c.id)!.employee_id).toBe(emp.id);
+    expect(getEmployee(db, emp.id)!.name).toBe("권민성");
+    expect(getEmployee(db, emp.id)!.department).toBe("인사총무팀");
+  });
+
+  it("다른 건도 가진 직원이면 새 직원을 만들어 이 건만 옮긴다", () => {
+    const emp = createEmployee(db, { name: "홍길동" });
+    const keep = createCase(db, { employee_id: emp.id, education_name: "그대로" });
+    const move = createCase(db, { employee_id: emp.id, education_name: "옮길 건" });
+
+    syncCaseFromApplicationFields(db, move.id, { name: "권민성" });
+
+    expect(getCase(db, keep.id)!.employee_id).toBe(emp.id);
+    expect(getCase(db, move.id)!.employee_id).not.toBe(emp.id);
+    expect(getEmployee(db, emp.id)!.name).toBe("홍길동"); // 기존 직원은 그대로
+  });
+
+  it("교육명·금액 교정이 건에 반영된다", () => {
+    const emp = createEmployee(db, { name: "김테스트" });
+    const c = createCase(db, { employee_id: emp.id, education_name: "잘못된 교육", expected_cost: 1000 });
+
+    syncCaseFromApplicationFields(db, c.id, { education_name: "올바른 교육", amount: 3000 });
+
+    const updated = getCase(db, c.id)!;
+    expect(updated.education_name).toBe("올바른 교육");
+    expect(updated.expected_cost).toBe(3000);
   });
 });

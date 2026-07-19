@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS reviews (
   created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 도구 설정 키-값 (Phase 6). 예: overdue_weeks = 이수 대기 경과 알림 기준(주).
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 -- 어느 신청 건에 붙일지 애매한 이수증 보관함 (Phase 4).
 -- 동명이인·다중 이수대기처럼 자동 매칭이 위험한 경우, 버리지 않고 여기 담아
 -- 세영 님이 후보 중 골라 붙이게 한다. 첨부되면 이 행은 삭제되고 documents 로 옮겨진다.
