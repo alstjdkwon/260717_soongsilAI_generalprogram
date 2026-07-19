@@ -1,0 +1,30 @@
+# 의존성 & 빌드 캐시
+node_modules/
+.next/
+dist/
+
+# 로컬 데이터 (Railway에서는 Volume으로 관리)
+data/
+
+# 환경변수 (Railway에서 설정)
+.env
+.env.local
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Git
+.git/
+.gitignore
+
+# 테스트 & 설정
+*.test.ts
+vitest.config.*
+tsconfig.tsbuildinfo
+
+# Claude / Gemini
+.claude/
+.agents/
