@@ -44,12 +44,12 @@ async function main(): Promise<void> {
   console.log(`\n▶ 라이브 파이프라인 검증 — ${FIXTURES.length}개 문서\n`);
 
   // 1) 신청서 인제스트 → 각 건 승인(이수 대기로) → 이수증이 매칭될 수 있게.
-  const appResults = await ingestFiles(db, parser, apps.map(load));
+  const appResults = await ingestFiles(db, parser, apps.map(load), "APPLICATION");
   for (const r of appResults) {
     if (r.outcome === "CREATED_CASE" && r.caseId) transitionCase(db, r.caseId, "APPROVE");
   }
   // 2) 이수증 인제스트.
-  const compResults = await ingestFiles(db, parser, comps.map(load));
+  const compResults = await ingestFiles(db, parser, comps.map(load), "COMPLETION");
 
   const byFile = new Map([...appResults, ...compResults].map((r) => [r.file, r]));
 

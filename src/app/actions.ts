@@ -7,7 +7,15 @@ import { redirect } from "next/navigation";
 import { getDb } from "../db/serverDb";
 import { transitionCase, reapply, syncCaseFromApplicationFields } from "../repo/cases";
 import { TransitionError } from "../domain/status";
-import { ingestFiles, attachPending, dismissPending, type IngestResult } from "../repo/ingest";
+import {
+  ingestFiles,
+  attachPending,
+  dismissPending,
+  resolveApplicationAsExisting,
+  resolveApplicationAsNew,
+  type IngestResult,
+  type DeclaredKind,
+} from "../repo/ingest";
 import { LlmParser } from "../ai/llmParser";
 import type { InputFile } from "../ai/types";
 import { getCaseView } from "../repo/queries";
@@ -122,12 +130,15 @@ export interface UploadState {
 
 /**
  * 드롭존에서 올라온 PDF 묶음을 인제스트한다(Upstage OCR + OpenAI).
+ * 문서 종류는 어느 드롭존에 넣었는지(declaredKind)로 정해진다 — AI 판별은 검증용.
  * 신청서→새 건 / 이수증→기존 건 매칭. 결과 요약을 돌려주고 큐·칸반을 갱신한다.
  */
 export async function uploadDocuments(
   _prev: UploadState,
   formData: FormData,
 ): Promise<UploadState> {
+  const declaredKind: DeclaredKind =
+    formData.get("declaredKind") === "COMPLETION" ? "COMPLETION" : "APPLICATION";
   const uploaded = formData
     .getAll("files")
     .filter((f): f is File => f instanceof File && f.size > 0);
@@ -145,7 +156,7 @@ export async function uploadDocuments(
 
   try {
     const db = getDb();
-    const results = await ingestFiles(db, new LlmParser(), files);
+    const results = await ingestFiles(db, new LlmParser(), files, declaredKind);
     // 새로 만든 심사 건은 직무 부합 근거를 바로 생성한다(현재까지 쌓인 교정을 few-shot 으로).
     const corrections = getRecentCorrections(db, 5);
     for (const r of results) {
@@ -211,9 +222,28 @@ export async function attachPendingDocument(formData: FormData) {
   redirect(`/case/${caseId}`);
 }
 
-/** 보관 중인 이수증을 버린다(오인식·중복). */
+/** 보관 중인 문서를 버린다(오인식·중복). */
 export async function dismissPendingDocument(formData: FormData) {
   const pendingId = Number(formData.get("pendingId"));
   dismissPending(getDb(), pendingId);
   revalidatePath("/");
+}
+
+/** 보류된 신청서를 기존 직원의 건으로 확정한다("같은 사람이다" / "중복 아닌 재신청이다"). */
+export async function resolvePendingAsExisting(formData: FormData) {
+  const pendingId = Number(formData.get("pendingId"));
+  const employeeId = Number(formData.get("employeeId"));
+  const caseId = resolveApplicationAsExisting(getDb(), pendingId, employeeId);
+  revalidatePath("/");
+  revalidatePath("/board");
+  if (caseId) redirect(`/case/${caseId}`);
+}
+
+/** 보류된 신청서를 새 직원의 건으로 확정한다("동명이인이다"). */
+export async function resolvePendingAsNew(formData: FormData) {
+  const pendingId = Number(formData.get("pendingId"));
+  const caseId = resolveApplicationAsNew(getDb(), pendingId);
+  revalidatePath("/");
+  revalidatePath("/board");
+  if (caseId) redirect(`/case/${caseId}`);
 }

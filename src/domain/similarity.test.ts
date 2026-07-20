@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { educationSimilarity } from "./similarity";
+import { educationSimilarity, normalizeName, normalizeDept } from "./similarity";
 
 describe("educationSimilarity", () => {
   it("완전히 같으면 1", () => {
@@ -31,5 +31,32 @@ describe("educationSimilarity", () => {
     const s2 = educationSimilarity("엑셀 고급 함수", "엑셀 기초 함수");
     expect(s2).toBeGreaterThan(0.3);
     expect(s2).toBeLessThan(0.6);
+  });
+});
+
+describe("normalizeName", () => {
+  it("앞뒤·중간 공백 차이는 흡수한다(자간을 벌려 인쇄한 이름 포함)", () => {
+    expect(normalizeName(" 권민성 ")).toBe("권민성");
+    expect(normalizeName("권 민 성")).toBe("권민성");
+  });
+
+  it("글자가 다른 이름은 절대 같아지지 않는다(동명이인 판단을 흐리면 안 됨)", () => {
+    expect(normalizeName("홍길동")).not.toBe(normalizeName("홍길둥"));
+  });
+
+  it("빈 값은 빈 문자열", () => {
+    expect(normalizeName(null)).toBe("");
+    expect(normalizeName("   ")).toBe("");
+  });
+});
+
+describe("normalizeDept", () => {
+  it("표기용 구분자만 걷어낸다", () => {
+    expect(normalizeDept("총무·인사팀")).toBe(normalizeDept("총무 인사팀"));
+    expect(normalizeDept("총무/인사팀")).toBe(normalizeDept("총무-인사팀"));
+  });
+
+  it("어순이 다르면 다른 부서로 남는다(사람이 확인하도록)", () => {
+    expect(normalizeDept("인사총무팀")).not.toBe(normalizeDept("총무인사팀"));
   });
 });

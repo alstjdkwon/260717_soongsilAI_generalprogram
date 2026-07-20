@@ -10,18 +10,31 @@ const INITIAL: UploadState = { results: [] };
 const OUTCOME: Record<IngestResult["outcome"], { label: string; cls: string }> = {
   CREATED_CASE: { label: "새 건 생성", cls: "ok" },
   MATCHED_CASE: { label: "기존 건 매칭", cls: "ok" },
-  PENDING_REVIEW: { label: "후보 확인 필요", cls: "warn" },
-  UNKNOWN: { label: "판별 실패", cls: "warn" },
+  PENDING_REVIEW: { label: "확인 필요", cls: "warn" },
 };
 
-export function Dropzone() {
+/** 칸마다 다른 안내 문구 — 어떤 서류를 넣는 칸인지 한눈에 알게 한다. */
+const COPY = {
+  APPLICATION: {
+    title: "신청서를 여기에",
+    sub: "교육을 듣기 전 승인받으려는 서류. 이름·부서를 대조해 새 건을 만듭니다.",
+  },
+  COMPLETION: {
+    title: "이수증을 여기에",
+    sub: "교육을 들은 후 받은 증명 서류. 이수 대기 중인 건을 찾아 붙입니다.",
+  },
+} as const;
+
+export function Dropzone({ kind }: { kind: "APPLICATION" | "COMPLETION" }) {
   const [state, action, pending] = useActionState(uploadDocuments, INITIAL);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const copy = COPY[kind];
 
   function submit(files: FileList | null): void {
     if (!files || files.length === 0) return;
     const fd = new FormData();
+    fd.append("declaredKind", kind);
     for (const f of files) fd.append("files", f);
     startTransition(() => action(fd));
   }
@@ -52,14 +65,14 @@ export function Dropzone() {
 
       {pending ? (
         <>
-          <h1 className="t-hero">AI가 문서를 읽는 중…</h1>
-          <p className="sub t-lead">Upstage OCR로 텍스트화하고, 종류를 판별해 필드를 뽑고 있습니다. 몇 초 걸립니다.</p>
+          <h1 className="t-display-lg">AI가 문서를 읽는 중…</h1>
+          <p className="sub t-caption">Upstage OCR로 텍스트화하고 필드를 뽑고 있습니다. 몇 초 걸립니다.</p>
         </>
       ) : state.results.length > 0 || state.error ? (
         <>
-          <h1 className="t-hero">처리 완료</h1>
+          <h1 className="t-display-lg">처리 완료</h1>
           {state.error ? (
-            <p className="sub t-lead" style={{ color: "#ff8a8a" }}>{state.error}</p>
+            <p className="sub t-caption" style={{ color: "#ff8a8a" }}>{state.error}</p>
           ) : (
             <ul className="dz-results">
               {state.results.map((r, i) => (
@@ -78,8 +91,8 @@ export function Dropzone() {
         </>
       ) : (
         <>
-          <h1 className="t-hero">PDF를 끌어다 놓으세요</h1>
-          <p className="sub t-lead">신청서·이수증 구분 없이 한 번에. AI가 문서 종류를 판별해 새 건을 만들거나 기존 건에 맞춥니다.</p>
+          <h1 className="t-display-lg">{copy.title}</h1>
+          <p className="sub t-caption">{copy.sub}</p>
           <p className="hint t-caption">여기를 클릭해 파일을 골라도 됩니다. 여러 개 한꺼번에 가능.</p>
         </>
       )}

@@ -50,12 +50,12 @@ export function educationSimilarity(a: string | null | undefined, b: string | nu
 }
 
 /**
- * 사람 이름 정규화 — 앞뒤 공백·연속 공백·유니코드 표기 차이만 흡수한다.
- * OCR 이 같은 이름을 "권민성 "/"권 민성" 으로 읽어도 같은 사람으로 보게 하되,
- * 글자가 다른 이름은 절대 같게 만들지 않는다(동명이인 판단을 흐리면 안 됨).
+ * 사람 이름 정규화 — 공백과 유니코드 표기 차이만 흡수한다.
+ * 서식상 자간을 벌려 인쇄한 이름을 OCR 이 "권 민 성" 으로 읽어도 "권민성" 과 같게 보려고
+ * 공백을 전부 없앤다. 글자가 다른 이름은 절대 같아지지 않는다(동명이인 판단을 흐리면 안 됨).
  */
 export function normalizeName(s: string | null | undefined): string {
-  return (s ?? "").normalize("NFC").trim().replace(/\s+/g, " ");
+  return (s ?? "").normalize("NFC").replace(/\s+/g, "");
 }
 
 /**

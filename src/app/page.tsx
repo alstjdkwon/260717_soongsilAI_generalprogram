@@ -24,7 +24,10 @@ export default function QueuePage() {
       <SubNav view="queue" />
       <main className="wrap">
         <section className="drop" aria-label="문서 업로드">
-          <Dropzone />
+          <div className="dz-pair">
+            <Dropzone kind="APPLICATION" />
+            <Dropzone kind="COMPLETION" />
+          </div>
           <div className="drop-side">
             <div className="drop-stat">
               <b className="tabnum">{actionable}</b>

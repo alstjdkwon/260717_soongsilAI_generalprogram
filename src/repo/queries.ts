@@ -269,19 +269,45 @@ export interface PendingCandidate {
   expectedCost: number | null;
 }
 
+/** 부서 불일치로 보류된 신청서에서, 이름이 같은 기존 직원 후보. */
+export interface PendingEmployee {
+  employeeId: number;
+  name: string;
+  department: string | null;
+  caseCount: number;
+}
+
+/** 중복 의심으로 보류된 신청서에서, 이미 진행중인 같은 교육 건. */
+export interface PendingConflict {
+  caseId: number;
+  employeeId: number;
+  educationName: string | null;
+  status: CaseStatus;
+  createdAt: string;
+}
+
 export interface PendingDocView {
   id: number;
+  /** 이수증 보류는 null, 신청서 보류는 DEPT_MISMATCH | DUPLICATE. */
+  holdReason: "DEPT_MISMATCH" | "DUPLICATE" | null;
   name: string | null;
+  department: string | null;
   educationName: string | null;
   amount: number | null;
   hours: number | null;
+  /** 이수증 보류에서만 채워진다 — 붙일 수 있는 심사 건. */
   candidates: PendingCandidate[];
+  /** DEPT_MISMATCH 에서만 채워진다 — 이름이 같은 기존 직원. */
+  sameNameEmployees: PendingEmployee[];
+  /** DUPLICATE 에서만 채워진다 — 충돌한 진행중 건. */
+  conflict: PendingConflict | null;
   createdAt: string;
 }
 
 interface PendingRow {
   id: number;
   kind: string;
+  hold_reason: string | null;
   extracted_fields: string | null;
   candidate_ids: string | null;
   created_at: string;
@@ -293,35 +319,83 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 어느 건에 붙일지 애매해 보관 중인 이수증들. 각 건의 후보 목록을 함께 실어 준다. */
+/**
+ * 자동 처리가 위험해 보관 중인 문서들. 보류 사유에 따라 사람이 결정할 때 필요한 정보를 함께 실어 준다.
+ *  - 이수증(holdReason null) → 붙일 수 있는 심사 건 후보
+ *  - 부서 불일치(DEPT_MISMATCH) → 이름이 같은 기존 직원들
+ *  - 중복 의심(DUPLICATE) → 충돌한 진행중 건
+ */
 export function getPendingDocuments(db: DB): PendingDocView[] {
   const rows = db
-    .prepare("SELECT id, kind, extracted_fields, candidate_ids, created_at FROM pending_documents ORDER BY created_at ASC")
+    .prepare(
+      "SELECT id, kind, hold_reason, extracted_fields, candidate_ids, created_at FROM pending_documents ORDER BY created_at ASC",
+    )
     .all() as unknown as PendingRow[];
 
   return rows.map((r) => {
     const fields = parseFields(r.extracted_fields) ?? {};
     const ids = safeParseIds(r.candidate_ids);
-    const candidates: PendingCandidate[] = ids
-      .map((id) => {
-        const c = db
-          .prepare("SELECT c.id, e.name, c.education_name, c.expected_cost FROM cases c JOIN employees e ON e.id = c.employee_id WHERE c.id = ?")
-          .get(id) as { id: number; name: string; education_name: string | null; expected_cost: number | null } | undefined;
-        if (!c) return null;
-        return { caseId: c.id, name: c.name, educationName: c.education_name, expectedCost: c.expected_cost };
-      })
-      .filter((x): x is PendingCandidate => x !== null);
+    const holdReason = r.hold_reason === "DEPT_MISMATCH" || r.hold_reason === "DUPLICATE" ? r.hold_reason : null;
 
     return {
       id: r.id,
+      holdReason,
       name: fields.name?.value != null ? String(fields.name.value) : null,
+      department: fields.department?.value != null ? String(fields.department.value) : null,
       educationName: fields.education_name?.value != null ? String(fields.education_name.value) : null,
       amount: num(fields.amount?.value),
       hours: num(fields.hours?.value),
-      candidates,
+      candidates: holdReason === null ? loadCandidates(db, ids) : [],
+      sameNameEmployees: holdReason === "DEPT_MISMATCH" ? loadEmployees(db, ids) : [],
+      conflict: holdReason === "DUPLICATE" ? loadConflict(db, ids[0]) : null,
       createdAt: r.created_at,
     };
   });
+}
+
+function loadCandidates(db: DB, ids: number[]): PendingCandidate[] {
+  return ids
+    .map((id) => {
+      const c = db
+        .prepare("SELECT c.id, e.name, c.education_name, c.expected_cost FROM cases c JOIN employees e ON e.id = c.employee_id WHERE c.id = ?")
+        .get(id) as { id: number; name: string; education_name: string | null; expected_cost: number | null } | undefined;
+      if (!c) return null;
+      return { caseId: c.id, name: c.name, educationName: c.education_name, expectedCost: c.expected_cost };
+    })
+    .filter((x): x is PendingCandidate => x !== null);
+}
+
+function loadEmployees(db: DB, ids: number[]): PendingEmployee[] {
+  return ids
+    .map((id) => {
+      const e = db
+        .prepare(
+          `SELECT e.id, e.name, e.department,
+                  (SELECT COUNT(*) FROM cases c WHERE c.employee_id = e.id) AS case_count
+             FROM employees e WHERE e.id = ?`,
+        )
+        .get(id) as { id: number; name: string; department: string | null; case_count: number } | undefined;
+      if (!e) return null;
+      return { employeeId: e.id, name: e.name, department: e.department, caseCount: e.case_count };
+    })
+    .filter((x): x is PendingEmployee => x !== null);
+}
+
+function loadConflict(db: DB, caseId: number | undefined): PendingConflict | null {
+  if (caseId == null) return null;
+  const c = db
+    .prepare("SELECT id, employee_id, education_name, status, created_at FROM cases WHERE id = ?")
+    .get(caseId) as
+    | { id: number; employee_id: number; education_name: string | null; status: CaseStatus; created_at: string }
+    | undefined;
+  if (!c) return null;
+  return {
+    caseId: c.id,
+    employeeId: c.employee_id,
+    educationName: c.education_name,
+    status: c.status,
+    createdAt: c.created_at,
+  };
 }
 
 function safeParseIds(json: string | null): number[] {

@@ -9,7 +9,7 @@ export function GlobalNav() {
           <span className="demo-badge" title="개인정보 보호를 위해 실제 데이터 대신 가상 데이터로 동작합니다">
             임의 생성 데이터
           </span>
-          <span className="gnav-user">전세영 · 총무·인사팀</span>
+          <span className="gnav-user">전세용 · 총무·인사팀</span>
         </div>
       </div>
     </nav>
