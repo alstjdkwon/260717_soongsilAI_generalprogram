@@ -401,11 +401,28 @@ a { color: inherit; text-decoration: none; }
 /* 원본 PDF 뷰어 + 문서 전환 탭 (상세화면 좌측) */
 .doc-tabs { display: flex; align-items: center; gap: 4px; }
 .doc-tab {
-  font-size: 13px; font-weight: 600; letter-spacing: -0.2px; color: var(--muted);
-  padding: 4px 10px; border-radius: var(--r-pill); white-space: nowrap;
+  font-family: var(--font-text);
+  font-size: 13px; font-weight: 600; letter-spacing: -0.2px;
+  color: var(--ink-80);
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  transition: all 0.15s ease;
+  cursor: pointer;
 }
-.doc-tab:hover { background: rgba(0,0,0,0.04); color: var(--ink); }
-.doc-tab.active { background: var(--ink); color: #fff; }
+.doc-tab:hover {
+  background: var(--canvas);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+.doc-tab:active { transform: scale(0.95); }
+.doc-tab.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
 .doc-open { color: var(--primary); white-space: nowrap; }
 .doc-open:hover { text-decoration: underline; }
 .paper-pdf { width: 100%; height: 720px; border: none; display: block; background: var(--parchment); }

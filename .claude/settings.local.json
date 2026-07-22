@@ -36,7 +36,14 @@
       "Bash(qlmanage -r)",
       "Bash(NODE_NO_WARNINGS=1 npx vitest run src/repo/ingest.test.ts)",
       "WebFetch(domain:console.upstage.ai)",
-      "Bash(NODE_NO_WARNINGS=1 node *)"
+      "Bash(NODE_NO_WARNINGS=1 node *)",
+      "Bash(mkdir -p ~/.claude/job-links)",
+      "Bash(cat)",
+      "Bash(chmod +x ~/.claude/link-jobs.sh)",
+      "Bash(~/.claude/link-jobs.sh)",
+      "mcp__claude_ai_Notion__notion-get-teams",
+      "mcp__claude_ai_Notion__notion-search",
+      "mcp__claude_ai_Notion__notion-fetch"
     ]
   }
 }
