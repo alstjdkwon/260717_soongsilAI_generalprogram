@@ -7,6 +7,7 @@ import { getCaseView, type CaseView } from "../../../repo/queries";
 import type { ExtractedFields } from "../../../domain/flags";
 import { won, shortDate } from "../../_components/format";
 import { GlobalNav } from "../../_components/Nav";
+import { RationaleSubmit } from "../../_components/RationaleSubmit";
 import {
   approveCase,
   markDocsArrived,
@@ -335,14 +336,14 @@ function FitRationalePanel({ c }: { c: CaseView }) {
           </form>
           <form action={generateRationale} className="rationale-regen">
             <input type="hidden" name="caseId" value={c.id} />
-            <button type="submit" className="btn-link-muted">AI로 다시 생성</button>
+            <RationaleSubmit label="AI로 다시 생성" className="btn-link-muted" />
           </form>
         </>
       ) : (
         <form action={generateRationale} className="actions rationale-empty">
           <input type="hidden" name="caseId" value={c.id} />
           <span className="muted t-caption" style={{ marginRight: "auto" }}>아직 근거가 없습니다.</span>
-          <button type="submit" className="btn btn-ghost">직무 부합 근거 생성</button>
+          <RationaleSubmit label="직무 부합 근거 생성" className="btn btn-ghost" />
         </form>
       )}
     </div>

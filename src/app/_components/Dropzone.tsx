@@ -2,6 +2,7 @@
 
 import { startTransition, useActionState, useRef, useState } from "react";
 import Link from "next/link";
+import { ThinkingOrb } from "thinking-orbs";
 import { uploadDocuments, type UploadState } from "../actions";
 import type { IngestResult } from "../../repo/ingest";
 
@@ -65,6 +66,7 @@ export function Dropzone({ kind }: { kind: "APPLICATION" | "COMPLETION" }) {
 
       {pending ? (
         <>
+          <ThinkingOrb state="searching" size={64} theme="dark" aria-label="AI가 문서를 읽는 중" />
           <h1 className="t-display-lg">AI가 문서를 읽는 중…</h1>
           <p className="sub t-caption">Upstage OCR로 텍스트화하고 필드를 뽑고 있습니다. 몇 초 걸립니다.</p>
         </>
