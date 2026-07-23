@@ -17,7 +17,7 @@ export function GlobalNav() {
 }
 
 /** 상단 확장 탭(자율교육 활성 / 나머지 준비중) + 뷰 전환(할일 큐 / 전체 현황). */
-export function SubNav({ view }: { view: "queue" | "board" }) {
+export function SubNav({ view }: { view: "queue" | "board" | "report" }) {
   return (
     <div className="subnav">
       <div className="wrap">
@@ -30,6 +30,7 @@ export function SubNav({ view }: { view: "queue" | "board" }) {
           <div className="viewswitch">
             <Link href="/" className={view === "queue" ? "active" : ""}>할일 큐</Link>
             <Link href="/board" className={view === "board" ? "active" : ""}>전체 현황</Link>
+            <Link href="/report" className={view === "report" ? "active" : ""}>성과</Link>
           </div>
           <a href="/api/export" className="btn btn-ghost btn-sm export-link">
             <ExportIcon />

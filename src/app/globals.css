@@ -432,3 +432,18 @@ a { color: inherit; text-decoration: none; }
 /* 미인식 필드 자리표시 */
 .field input::placeholder { color: #b0b0b5; font-style: italic; }
 .conf.none { color: #b0b0b5; }
+
+/* ── 성과 측정 리포트 ─────────────────────────── */
+.report { padding-bottom: var(--sp-xl); }
+.report-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-lg); margin: var(--sp-lg) 0 var(--sp-md); }
+.report-head p { max-width: 62ch; }
+.report-scope { display: flex; align-items: center; gap: var(--sp-sm); margin-bottom: var(--sp-md); flex-wrap: wrap; }
+.report-metric + .report-metric { margin-top: var(--sp-md); }
+.report-metric-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-sm); }
+/* 지표 수치 — 화면에서 가장 먼저 읽혀야 하는 값 */
+.report-value { font-family: var(--font-display); font-size: 34px; font-weight: 600; letter-spacing: -0.5px; line-height: 1.1; margin: var(--sp-sm) 0 0; }
+.report-extra { margin: 4px 0 0; }
+.report-def { margin: var(--sp-sm) 0 6px; color: var(--ink-80); }
+.report-warn { color: var(--warn); margin: 0 0 6px; }
+.report-pending { margin-top: var(--sp-md); border-style: dashed; }
+.report-pending code { font-size: 12px; background: rgba(0,0,0,0.05); border-radius: 4px; padding: 1px 5px; }
