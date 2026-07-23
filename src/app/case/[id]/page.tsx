@@ -8,6 +8,7 @@ import type { ExtractedFields } from "../../../domain/flags";
 import { won, shortDate } from "../../_components/format";
 import { GlobalNav } from "../../_components/Nav";
 import { RationaleSubmit } from "../../_components/RationaleSubmit";
+import { DecisionTimer } from "../../_components/DecisionTimer";
 import {
   approveCase,
   markDocsArrived,
@@ -383,6 +384,7 @@ function ActionBar({ c, reasonError }: { c: CaseView; reasonError: boolean }) {
     <div style={{ marginTop: "var(--sp-lg)" }}>
       <form action={rejectCase} className="reject-form">
         <input type="hidden" name="caseId" value={c.id} />
+        <DecisionTimer />
         <textarea
           name="reason"
           placeholder="반려 사유 (필수) — 신청자에게 전달할 근거를 적어주세요."

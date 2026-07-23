@@ -32,6 +32,11 @@ export function openDb(path = ":memory:"): DB {
 function migrate(db: DB): void {
   addColumn(db, "pending_documents", "hold_reason", "TEXT");
   addColumn(db, "pending_documents", "declared_kind", "TEXT");
+  // 성과 측정용 (공모전 보고서). 자세한 용도는 schema.sql 주석 참고.
+  addColumn(db, "cases", "is_seed", "INTEGER NOT NULL DEFAULT 0");
+  addColumn(db, "cases", "decision_seconds", "INTEGER");
+  addColumn(db, "documents", "extracted_original", "TEXT");
+  addColumn(db, "reviews", "ai_rationale", "TEXT");
 }
 
 function addColumn(db: DB, table: string, column: string, type: string): void {

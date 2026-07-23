@@ -26,7 +26,12 @@ CREATE TABLE IF NOT EXISTS cases (
   approved_at     TEXT,                    -- 승인일
   docs_arrived_at TEXT,                    -- 서류 도착일
   refunded_at     TEXT,                    -- 환급일
-  rejected_at     TEXT                     -- 반려일
+  rejected_at     TEXT,                    -- 반려일
+  -- 성과 측정용. 시드(데모) 건은 1 — 보고서 집계에서 WHERE is_seed = 0 으로 걸러낸다.
+  is_seed         INTEGER NOT NULL DEFAULT 0,
+  -- 상세 화면을 연 시점부터 승인/반려를 누르기까지의 초. 달력 시간(created_at→approved_at)과 달리
+  -- 실제 판단에 쓴 시간에 가깝다. 탭을 열어둔 채 자리를 비우면 부풀려지므로 중앙값으로 읽을 것.
+  decision_seconds INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
@@ -39,6 +44,9 @@ CREATE TABLE IF NOT EXISTS documents (
   file_path        TEXT,
   detected_kind    TEXT,                   -- AI 문서종류 판별 결과
   extracted_fields TEXT,                   -- JSON: 필드값 + 필드별 신뢰도(HIGH/MID/LOW)
+  -- 적재 시점의 AI 추출 원본. saveFields 가 extracted_fields 를 덮어써도 이건 그대로 둔다.
+  -- 둘을 비교하면 "사람이 고친 필드 비율" = OCR 정확도가 나온다.
+  extracted_original TEXT,
   created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -50,6 +58,9 @@ CREATE TABLE IF NOT EXISTS reviews (
   fit_rationale  TEXT,                     -- AI 직무 부합 근거문 (교정 시 교정본으로 대체)
   fit_confidence TEXT,                     -- 근거 신뢰도 HIGH/MID/LOW (Phase 5)
   correction     TEXT,                     -- 세영님 교정 (few-shot 축적용)
+  -- AI 가 처음 생성한 근거문. 교정해도 덮어쓰지 않는다.
+  -- correction 과 비교하면 "무수정 채택 vs 교정"이 사후 판별된다.
+  ai_rationale   TEXT,
   created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

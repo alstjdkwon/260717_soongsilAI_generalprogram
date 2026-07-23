@@ -65,12 +65,15 @@ function insertDocument(
   parsed: ParsedDocument,
   filePath: string,
 ): number {
+  // extracted_original 에 같은 JSON 을 한 번 더 넣는다 — 이후 사람이 필드를 고쳐도
+  // AI 원본이 남아 OCR 정확도를 계산할 수 있다.
+  const json = JSON.stringify(parsed.fields);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO documents (case_id, kind, detected_kind, extracted_fields, file_path)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO documents (case_id, kind, detected_kind, extracted_fields, extracted_original, file_path)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .run(caseId, kind, parsed.detectedKind, JSON.stringify(parsed.fields), filePath);
+    .run(caseId, kind, parsed.detectedKind, json, json, filePath);
   return Number(lastInsertRowid);
 }
 
@@ -356,10 +359,10 @@ export function attachPending(db: DB, pendingId: number, caseId: number): number
 
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO documents (case_id, kind, detected_kind, extracted_fields, file_path)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO documents (case_id, kind, detected_kind, extracted_fields, extracted_original, file_path)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .run(caseId, p.kind, p.detected_kind, p.extracted_fields, p.file_path);
+    .run(caseId, p.kind, p.detected_kind, p.extracted_fields, p.extracted_fields, p.file_path);
 
   const c = getCase(db, caseId);
   if (c?.status === "IN_PROGRESS") transitionCase(db, caseId, "DOCS_ARRIVED");
@@ -394,9 +397,9 @@ function createCaseFromPending(db: DB, pendingId: number, employeeId: number | n
     expected_cost: fieldNum(fields, "amount"),
   });
   db.prepare(
-    `INSERT INTO documents (case_id, kind, detected_kind, extracted_fields, file_path)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(c.id, p.kind, p.detected_kind, p.extracted_fields, p.file_path);
+    `INSERT INTO documents (case_id, kind, detected_kind, extracted_fields, extracted_original, file_path)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(c.id, p.kind, p.detected_kind, p.extracted_fields, p.extracted_fields, p.file_path);
 
   db.prepare("DELETE FROM pending_documents WHERE id = ?").run(pendingId);
   return c.id;

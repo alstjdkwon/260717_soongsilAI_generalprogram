@@ -169,18 +169,20 @@ export function seedDb(db: DB, now = Date.now()): void {
     empId.set(e.name, Number(lastInsertRowid));
   }
 
+  // is_seed = 1 — 이 건들은 날짜가 임의로 백필된 데모 데이터다. 성과 보고서 집계에서
+  // WHERE is_seed = 0 으로 걸러내 실사용 기록만 세도록 표시해 둔다.
   const insertCase = db.prepare(
     `INSERT INTO cases
        (employee_id, education_name, expected_cost, status, reject_reason, prev_case_id,
-        created_at, approved_at, docs_arrived_at, refunded_at, rejected_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        created_at, approved_at, docs_arrived_at, refunded_at, rejected_at, is_seed)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
   );
   const insertDoc = db.prepare(
-    `INSERT INTO documents (case_id, kind, detected_kind, extracted_fields, file_path)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO documents (case_id, kind, detected_kind, extracted_fields, extracted_original, file_path)
+     VALUES (?, ?, ?, ?, ?, ?)`,
   );
   const insertReview = db.prepare(
-    `INSERT INTO reviews (case_id, fit_rationale, fit_confidence) VALUES (?, ?, ?)`,
+    `INSERT INTO reviews (case_id, fit_rationale, fit_confidence, ai_rationale) VALUES (?, ?, ?, ?)`,
   );
   // 근거문 끝의 "신뢰도: 고/중/저" 를 배지용 신뢰도로 뽑는다.
   const confOf = (text: string): "HIGH" | "MID" | "LOW" =>
@@ -208,13 +210,15 @@ export function seedDb(db: DB, now = Date.now()): void {
     if (c.status === "REJECTED") rejectedCaseId.set(c.education_name, caseId);
 
     if (c.application) {
-      insertDoc.run(caseId, "APPLICATION", "APPLICATION", JSON.stringify(c.application), `seed/${caseId}-application.pdf`);
+      const json = JSON.stringify(c.application);
+      insertDoc.run(caseId, "APPLICATION", "APPLICATION", json, json, `seed/${caseId}-application.pdf`);
     }
     if (c.completion) {
-      insertDoc.run(caseId, "COMPLETION", "COMPLETION", JSON.stringify(c.completion), `seed/${caseId}-completion.pdf`);
+      const json = JSON.stringify(c.completion);
+      insertDoc.run(caseId, "COMPLETION", "COMPLETION", json, json, `seed/${caseId}-completion.pdf`);
     }
     if (c.fit_rationale) {
-      insertReview.run(caseId, c.fit_rationale, confOf(c.fit_rationale));
+      insertReview.run(caseId, c.fit_rationale, confOf(c.fit_rationale), c.fit_rationale);
     }
   }
 }

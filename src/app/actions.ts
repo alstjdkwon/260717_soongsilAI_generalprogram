@@ -29,9 +29,21 @@ function refresh(caseId: number) {
   revalidatePath(`/case/${caseId}`);
 }
 
+/**
+ * 상세 화면을 연 뒤 결정을 누르기까지 걸린 시간을 기록한다(성과 측정용).
+ * 값이 없거나(스크립트 미실행) 비정상이면 조용히 건너뛴다 — 측정은 부수 효과일 뿐,
+ * 심사 동작을 막아서는 안 된다.
+ */
+function recordDecisionTime(id: number, formData: FormData): void {
+  const ms = Number(formData.get("elapsedMs"));
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  getDb().prepare("UPDATE cases SET decision_seconds = ? WHERE id = ?").run(Math.round(ms / 1000), id);
+}
+
 export async function approveCase(formData: FormData) {
   const id = Number(formData.get("caseId"));
   transitionCase(getDb(), id, "APPROVE");
+  recordDecisionTime(id, formData);
   refresh(id);
 }
 
@@ -44,6 +56,8 @@ export async function markDocsArrived(formData: FormData) {
 export async function refundCase(formData: FormData) {
   const id = Number(formData.get("caseId"));
   transitionCase(getDb(), id, "REFUND");
+  // 환급 폼도 같은 심사 화면이라 elapsedMs 가 실려 오지만 일부러 기록하지 않는다.
+  // decision_seconds 는 건당 하나뿐이라, 여기서 쓰면 승인/반려 때 잰 판단시간을 덮어쓴다.
   refresh(id);
 }
 
@@ -58,6 +72,7 @@ export async function rejectCase(formData: FormData) {
     }
     throw e;
   }
+  recordDecisionTime(id, formData);
   refresh(id);
 }
 
@@ -102,6 +117,7 @@ export async function saveFields(formData: FormData) {
       confidence: "HIGH", // 사람이 확인·수정한 값은 확정으로 승격
     };
   }
+  // extracted_original 은 건드리지 않는다 — AI 원본과 이 교정본을 비교해야 OCR 정확도가 나온다.
   db.prepare("UPDATE documents SET extracted_fields = ? WHERE id = ?").run(
     JSON.stringify(fields),
     documentId,

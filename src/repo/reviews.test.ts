@@ -35,6 +35,27 @@ describe("reviews repo", () => {
     expect(r.fit_confidence).toBe("HIGH");
   });
 
+  it("교정해도 AI 원문(ai_rationale)은 보존된다 — 채택/교정 판별의 근거", () => {
+    const caseId = makeCase(db, "박보존", "학사 행정", "데이터 분석 입문");
+    saveRationale(db, caseId, "AI 초안 근거.", "MID");
+    expect(getReview(db, caseId)?.ai_rationale).toBe("AI 초안 근거.");
+
+    saveCorrection(db, caseId, "사람이 고쳐 쓴 근거.");
+    const r = getReview(db, caseId)!;
+    expect(r.ai_rationale).toBe("AI 초안 근거."); // 덮어써지지 않았다
+    expect(r.correction).toBe("사람이 고쳐 쓴 근거.");
+    expect(r.correction).not.toBe(r.ai_rationale); // → "교정"으로 집계된다
+  });
+
+  it("AI 초안을 그대로 저장하면 무수정 채택으로 집계된다", () => {
+    const caseId = makeCase(db, "최채택", "총무", "계약 실무");
+    saveRationale(db, caseId, "총무 담당에게 계약 실무는 부합.", "HIGH");
+    saveCorrection(db, caseId, "총무 담당에게 계약 실무는 부합."); // 고치지 않고 저장
+
+    const r = getReview(db, caseId)!;
+    expect(r.correction).toBe(r.ai_rationale);
+  });
+
   it("최근 교정만, 최신 우선으로 few-shot 예시를 돌려준다", () => {
     const c1 = makeCase(db, "직원1", "시설 안전", "산업안전 교육");
     const c2 = makeCase(db, "직원2", "홍보", "영상 편집");

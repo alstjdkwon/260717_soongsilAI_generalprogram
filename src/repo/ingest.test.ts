@@ -47,6 +47,25 @@ describe("ingestFiles", () => {
     expect(view.expectedCost).toBe(90000);
   });
 
+  it("적재 시 AI 추출 원본을 extracted_original 에 함께 남긴다 — OCR 정확도 계산용", async () => {
+    const parser = new FakeParser({
+      "a.pdf": application(fields({ name: ["김원본", "HIGH"], department: ["전산팀", "LOW"], education_name: ["도커 실무", "HIGH"], amount: [90000, "HIGH"] })),
+    });
+    const [r] = await ingestFiles(db, parser, [file("a.pdf")], "APPLICATION");
+    const doc = db
+      .prepare("SELECT extracted_fields, extracted_original FROM documents WHERE case_id = ?")
+      .get(r.caseId!) as { extracted_fields: string; extracted_original: string };
+
+    expect(doc.extracted_original).toBeTruthy();
+    expect(doc.extracted_original).toBe(doc.extracted_fields); // 적재 직후엔 동일
+    // 사람이 저신뢰 필드를 고쳐도(=extracted_fields 만 갱신) 원본은 그대로여야 한다.
+    db.prepare("UPDATE documents SET extracted_fields = ? WHERE case_id = ?").run("{}", r.caseId!);
+    const after = db
+      .prepare("SELECT extracted_original FROM documents WHERE case_id = ?")
+      .get(r.caseId!) as { extracted_original: string };
+    expect(JSON.parse(after.extracted_original).name.value).toBe("김원본");
+  });
+
   it("같은 이름의 신청서 두 건은 직원 하나에 건 둘로 붙는다", async () => {
     const parser = new FakeParser({
       "a1.pdf": application(fields({ name: ["박중복", "HIGH"], department: ["총무팀", "HIGH"], education_name: ["교육1", "HIGH"], amount: [10000, "HIGH"] })),

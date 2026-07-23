@@ -13,28 +13,36 @@ export interface Review {
   fit_rationale: string | null;
   fit_confidence: Confidence | null;
   correction: string | null;
+  ai_rationale: string | null;
 }
 
 /** 건의 최신 review 행. */
 export function getReview(db: DB, caseId: number): Review | undefined {
   return db
-    .prepare("SELECT id, case_id, fit_rationale, fit_confidence, correction FROM reviews WHERE case_id = ? ORDER BY id DESC LIMIT 1")
+    .prepare("SELECT id, case_id, fit_rationale, fit_confidence, correction, ai_rationale FROM reviews WHERE case_id = ? ORDER BY id DESC LIMIT 1")
     .get(caseId) as Review | undefined;
 }
 
-/** AI 근거문·신뢰도 저장(교정은 건드리지 않음). 행이 없으면 만든다. */
+/**
+ * AI 근거문·신뢰도 저장(교정은 건드리지 않음). 행이 없으면 만든다.
+ * ai_rationale 에도 같은 값을 남겨, 교정 후에도 AI 원문이 보존되게 한다(성과 측정용).
+ */
 export function saveRationale(db: DB, caseId: number, rationale: string, confidence: Confidence): void {
   const existing = getReview(db, caseId);
   if (existing) {
-    db.prepare("UPDATE reviews SET fit_rationale = ?, fit_confidence = ? WHERE id = ?").run(rationale, confidence, existing.id);
+    db.prepare("UPDATE reviews SET fit_rationale = ?, fit_confidence = ?, ai_rationale = ? WHERE id = ?").run(rationale, confidence, rationale, existing.id);
   } else {
-    db.prepare("INSERT INTO reviews (case_id, fit_rationale, fit_confidence) VALUES (?, ?, ?)").run(caseId, rationale, confidence);
+    db.prepare("INSERT INTO reviews (case_id, fit_rationale, fit_confidence, ai_rationale) VALUES (?, ?, ?, ?)").run(caseId, rationale, confidence, rationale);
   }
 }
 
 /**
  * 세영 님 교정 저장. 교정본이 화면에 보이는 근거문이 되고(fit_rationale 대체),
  * 사람이 확정한 값이므로 신뢰도는 HIGH. correction 은 few-shot 축적용으로 남긴다.
+ *
+ * ai_rationale 은 절대 건드리지 않는다 — 그래야 correction 과 비교해 "무수정 채택 vs 교정"을
+ * 사후에 가릴 수 있다(성과 측정용). INSERT 분기의 ai_rationale = NULL 은 "AI 초안 없이
+ * 사람이 직접 쓴 건"을 뜻하므로 그대로 두는 것이 맞다.
  */
 export function saveCorrection(db: DB, caseId: number, corrected: string): void {
   const text = corrected.trim();
