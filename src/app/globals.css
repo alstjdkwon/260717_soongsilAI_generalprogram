@@ -447,3 +447,16 @@ a { color: inherit; text-decoration: none; }
 .report-warn { color: var(--warn); margin: 0 0 6px; }
 .report-pending { margin-top: var(--sp-md); border-style: dashed; }
 .report-pending code { font-size: 12px; background: rgba(0,0,0,0.05); border-radius: 4px; padding: 1px 5px; }
+
+/* 담당업무 인라인 입력 — 조직도에 없어 심사 중 직접 채우는 경우가 많다 */
+.jobrole { display: flex; align-items: center; gap: var(--sp-xs); flex-wrap: wrap; margin: 0 0 var(--sp-sm); }
+.jobrole label { color: var(--muted); white-space: nowrap; }
+.jobrole input {
+  flex: 1; min-width: 180px;
+  font-family: var(--font-text); font-size: 14px; letter-spacing: -0.2px;
+  padding: 6px 10px; border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  background: var(--canvas); color: var(--ink);
+}
+.jobrole input:focus { outline: none; border-color: var(--primary-focus); }
+.jobrole-empty input { border-color: var(--warn); background: var(--warn-tint); }
+.jobrole-hint { flex-basis: 100%; color: var(--warn); margin: 0; }

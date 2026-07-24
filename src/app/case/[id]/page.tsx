@@ -18,6 +18,7 @@ import {
   saveFields,
   generateRationale,
   correctRationale,
+  saveJobRole,
 } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -320,10 +321,13 @@ function FitRationalePanel({ c }: { c: CaseView }) {
         <h3 className="t-body-strong">직무 부합 근거 <span className="muted t-fine">· AI 상식추론, 세영 님 확인·교정</span></h3>
         {c.fitConfidence && <span className={`conf ${c.fitConfidence}`}>{confLabel(c.fitConfidence)}</span>}
       </div>
-      <p className="t-fine muted rationale-meta">
-        담당업무 {c.jobRole ?? "미상"}
-        {c.remainingPoints != null && <> · 잔여 교육 포인트 <b className="tabnum">{c.remainingPoints}P</b></>}
-      </p>
+      <JobRoleField c={c} />
+
+      {c.remainingPoints != null && (
+        <p className="t-fine muted rationale-meta">
+          잔여 교육 포인트 <b className="tabnum">{c.remainingPoints}P</b>
+        </p>
+      )}
 
       {c.fitRationale ? (
         <>
@@ -348,6 +352,33 @@ function FitRationalePanel({ c }: { c: CaseView }) {
         </form>
       )}
     </div>
+  );
+}
+
+/**
+ * 담당업무 입력 — 조직도에 없는 경우가 많아, 심사 중 비어 있으면 그 자리에서 채우게 한다.
+ * 비어 있을 때만 안내 문구를 띄워, 근거 품질이 왜 낮은지 알 수 있게 한다.
+ */
+function JobRoleField({ c }: { c: CaseView }) {
+  const empty = !c.jobRole;
+  return (
+    <form action={saveJobRole} className={`jobrole${empty ? " jobrole-empty" : ""}`}>
+      <input type="hidden" name="caseId" value={c.id} />
+      <input type="hidden" name="employeeId" value={c.employeeId} />
+      <label htmlFor="jobRole" className="t-fine">담당업무</label>
+      <input
+        id="jobRole"
+        name="jobRole"
+        defaultValue={c.jobRole ?? ""}
+        placeholder="예: 교내 시스템 운영, 정보보안"
+      />
+      <button type="submit" className="btn-link-muted">저장</button>
+      {empty && (
+        <p className="t-fine jobrole-hint">
+          비어 있으면 AI가 직무와 교육을 대조할 수 없어 근거가 부정확해집니다.
+        </p>
+      )}
+    </form>
   );
 }
 

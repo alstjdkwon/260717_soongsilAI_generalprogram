@@ -211,6 +211,22 @@ export async function generateRationale(formData: FormData) {
   refresh(caseId);
 }
 
+/**
+ * 담당업무를 직접 입력받는다.
+ *
+ * 조직도에 담당업무가 없는 경우가 많아, 심사하다 비어 있으면 그 자리에서 채우게 한다.
+ * 직무 부합 근거의 핵심 입력이라 이게 비면 "담당업무: 미상" 근거가 나온다.
+ * (판단보조 2단계에서 결정 시점 스냅샷을 따로 저장해야 한다 — 담당업무가 바뀌면
+ *  과거 판례의 의미가 뒤집히기 때문. 여기서는 현재값만 갱신한다.)
+ */
+export async function saveJobRole(formData: FormData) {
+  const caseId = Number(formData.get("caseId"));
+  const employeeId = Number(formData.get("employeeId"));
+  const jobRole = String(formData.get("jobRole") ?? "").trim();
+  getDb().prepare("UPDATE employees SET job_role = ? WHERE id = ?").run(jobRole || null, employeeId);
+  refresh(caseId);
+}
+
 /** 세영 님이 근거문을 교정해 저장한다. 교정본은 이후 근거 생성의 few-shot 이 된다. */
 export async function correctRationale(formData: FormData) {
   const caseId = Number(formData.get("caseId"));
